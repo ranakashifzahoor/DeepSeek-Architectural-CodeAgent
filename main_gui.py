@@ -6,10 +6,17 @@ A modern dark-mode desktop UI that:
     1. collects the DeepSeek API key, the two architecture documents and an
        output directory,
     2. parses the documents with ``parser.py``,
-    3. runs the DeepSeek generation (``agent_core.py``) in a background thread
-       so the window never freezes,
+    3. runs the generation (``agent_core.py``) in a background thread so the
+       window never freezes,
     4. streams live status / terminal output into the log panel, and
-    5. shows success / error popups when a run finishes.
+    5. shows a clean success popup with the exact file count when a run
+       finishes.
+
+Generation modes:
+    * Built-in template generator (default) - writes the 7 project files
+      directly, no API call, no network required.
+    * Live DeepSeek API generation - optional; tick the checkbox and provide
+      an API key.
 
 Run with::
 
@@ -59,6 +66,9 @@ ACCENT_HOVER = "#2559C9"
 GENERATE_LABEL = "Generate Project Code"
 GENERATE_RUNNING_LABEL = "Generating..."
 
+MODE_BUILTIN_TEXT = "Generating project files (built-in templates)..."
+MODE_API_TEXT = "Generating project files with DeepSeek..."
+
 
 class CodeAgentApp(ctk.CTk):
     """Main window of the desktop dashboard."""
@@ -77,7 +87,8 @@ class CodeAgentApp(ctk.CTk):
         self._running = False
         self._stage_count = 0
         self._parse_done = False
-        self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
+        self._total_steps = 2
+        self._current_out_dir = ""
 
         self._build_ui()
         self.after(80, self._drain_queue)
@@ -88,8 +99,8 @@ class CodeAgentApp(ctk.CTk):
             'folder, then click "Generate Project Code".'
         )
         self._append_log(
-            "[gui] A JSON copy of the parsed architecture is saved into the "
-            "output folder on each run."
+            "[gui] Default mode: built-in template generator (7 files, no API "
+            "call). Tick the box for live DeepSeek API generation."
         )
 
     # ------------------------------------------------------------------ UI --
@@ -113,8 +124,8 @@ class CodeAgentApp(ctk.CTk):
             header,
             text=(
                 "Parse architecture docs and generate the Space Fractions "
-                "project (Node.js / Express, Docker, SQL, OpenAPI, tests) "
-                "with the DeepSeek API."
+                "backend project (Node.js / Express, Docker, SQL, OpenAPI, "
+                "tests)."
             ),
             font=ctk.CTkFont(size=13),
             text_color=("gray35", "gray65"),
@@ -130,7 +141,7 @@ class CodeAgentApp(ctk.CTk):
             row=0, column=0, padx=(14, 8), pady=(14, 6), sticky="w"
         )
         self.api_key_entry = ctk.CTkEntry(
-            settings, placeholder_text="sk-...", show="*"
+            settings, placeholder_text="sk-... (only needed for live API mode)", show="*"
         )
         self.api_key_entry.grid(row=0, column=1, padx=8, pady=(14, 6), sticky="ew")
 
@@ -143,23 +154,31 @@ class CodeAgentApp(ctk.CTk):
             width=80,
         ).grid(row=0, column=2, padx=(8, 14), pady=(14, 6))
 
+        self.use_api_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            settings,
+            text="Use DeepSeek API for live generation (otherwise: built-in templates)",
+            variable=self.use_api_var,
+            command=self._on_mode_toggle,
+        ).grid(row=1, column=0, columnspan=3, padx=(14, 14), pady=(0, 8), sticky="w")
+
         self.doc_entry = self._path_row(
             settings,
-            1,
+            2,
             "Architecture Documentation",
             str(BASE_DIR / arch_parser.DOC_FILE_NAME),
             self._pick_documentation,
         )
         self.view_entry = self._path_row(
             settings,
-            2,
+            3,
             "Architecture Views",
             str(BASE_DIR / arch_parser.VIEW_FILE_NAME),
             self._pick_view,
         )
         self.out_entry = self._path_row(
             settings,
-            3,
+            4,
             "Target Output Directory",
             str(BASE_DIR / "output"),
             self._pick_output_dir,
@@ -254,6 +273,16 @@ class CodeAgentApp(ctk.CTk):
     def _toggle_key_visibility(self) -> None:
         self.api_key_entry.configure(show="" if self.show_key_var.get() else "*")
 
+    def _on_mode_toggle(self) -> None:
+        if self.use_api_var.get():
+            self.status_label.configure(
+                text="Mode: DeepSeek API live generation (API key required)."
+            )
+        else:
+            self.status_label.configure(
+                text="Mode: built-in template generation (no API key needed)."
+            )
+
     def _pick_documentation(self) -> None:
         path = filedialog.askopenfilename(
             parent=self,
@@ -311,15 +340,18 @@ class CodeAgentApp(ctk.CTk):
         if self._running:
             return
 
+        use_api = bool(self.use_api_var.get())
         api_key = self.api_key_entry.get().strip()
         doc_path = Path(self.doc_entry.get().strip())
         view_path = Path(self.view_entry.get().strip())
         out_value = self.out_entry.get().strip()
 
-        if not api_key:
+        if use_api and not api_key:
             messagebox.showwarning(
                 "Missing API key",
-                "Please enter your DeepSeek API key first.",
+                "Live API generation needs a DeepSeek API key.\n\n"
+                'Enter one, or uncheck "Use DeepSeek API" to generate with '
+                "the built-in templates.",
                 parent=self,
             )
             return
@@ -359,8 +391,8 @@ class CodeAgentApp(ctk.CTk):
         self._running = True
         self._stage_count = 0
         self._parse_done = False
-        self._current_out_dir = out_dir
-        self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
+        self._current_out_dir = str(out_dir)
+        self._total_steps = (1 + len(agent_core.DEFAULT_STAGES)) if use_api else 2
         self.progress.set(0.0)
         self.generate_button.configure(state="disabled", text=GENERATE_RUNNING_LABEL)
         self.status_label.configure(text="Starting...")
@@ -368,30 +400,32 @@ class CodeAgentApp(ctk.CTk):
         stamp = datetime.now().strftime("%H:%M:%S")
         self._append_log("-" * 64)
         self._append_log(f"[gui] Run started at {stamp}")
+        self._append_log(f"[gui] Mode          : {'DeepSeek API live generation' if use_api else 'Built-in template generator'}")
         self._append_log(f"[gui] Documentation : {doc_path}")
         self._append_log(f"[gui] Architecture  : {view_path}")
         self._append_log(f"[gui] Output folder : {out_dir}")
 
         self._worker = threading.Thread(
             target=self._worker_run,
-            args=(doc_path, view_path, out_dir, api_key),
+            args=(doc_path, view_path, out_dir, api_key, use_api),
             daemon=True,
         )
         self._worker.start()
 
     def _worker_run(
-        self, doc_path: Path, view_path: Path, out_dir: Path, api_key: str
+        self,
+        doc_path: Path,
+        view_path: Path,
+        out_dir: Path,
+        api_key: str,
+        use_api: bool,
     ) -> None:
-        """Background worker: parse documents, then run DeepSeek generation."""
+        """Background worker: parse documents, then run the generation."""
         q = self._queue
         try:
             q.put(("status", "Parsing architecture documents..."))
             q.put(("log", "[gui] Parsing architecture documents..."))
             payload = arch_parser.build_payload(doc_path, view_path)
-            payload_path = arch_parser.save_payload(
-                payload, out_dir / "architecture_payload.json"
-            )
-            q.put(("log", f"[gui] Payload saved to: {payload_path}"))
 
             doc_info = payload["documents"]["documentation"]
             view_info = payload["documents"]["architecture_view"]
@@ -406,19 +440,27 @@ class CodeAgentApp(ctk.CTk):
             )
             q.put(("parsed", True))
 
-            q.put(("status", "Generating project files with DeepSeek..."))
-            
-            res = agent_core.generate_project(
+            q.put(("status", MODE_API_TEXT if use_api else MODE_BUILTIN_TEXT))
+            q.put(
+                (
+                    "log",
+                    "[gui] Generating project files with the DeepSeek API..."
+                    if use_api
+                    else "[gui] Generating project files with the built-in template generator...",
+                )
+            )
+            summary = agent_core.generate_project(
                 payload,
                 out_dir,
                 api_key=api_key,
-                log_callback=lambda msg: q.put(("log", msg))
+                use_api=use_api,
+                log=lambda message: q.put(("log", str(message))),
             )
-
-            q.put(("done", res))
+            q.put(("done", summary))
         except Exception as e:
             q.put(("log", traceback.format_exc()))
             q.put(("error", f"{type(e).__name__}: {e}"))
+
     # ---------------------------------------------------------- queue drain --
 
     def _drain_queue(self) -> None:
@@ -449,7 +491,9 @@ class CodeAgentApp(ctk.CTk):
                         out_dir_str = str(getattr(self, "_current_out_dir", ""))
                         used_fallback = False
                     if used_fallback:
-                        self.status_label.configure(text="Completed with fallback files.")
+                        self.status_label.configure(
+                            text="Completed with fallback files."
+                        )
                         messagebox.showwarning(
                             "Generation finished with fallback files",
                             f"DeepSeek API was unavailable, so {len(files)} fallback "
@@ -468,9 +512,13 @@ class CodeAgentApp(ctk.CTk):
                 elif kind == "error":
                     self._finish_run()
                     self.status_label.configure(text="Failed.")
-                    messagebox.showerror(
-                        "Generation failed", str(payload), parent=self
-                    )
+                    message = str(payload)
+                    if "stage '" in message:
+                        message += (
+                            '\n\nTip: uncheck "Use DeepSeek API" to generate '
+                            "with the built-in templates instead."
+                        )
+                    messagebox.showerror("Generation failed", message, parent=self)
         except queue.Empty:
             pass
         self.after(80, self._drain_queue)

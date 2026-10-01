@@ -2,7 +2,7 @@
 
 A **Windows desktop application** that turns architectural documentation into a complete, runnable codebase using the official **DeepSeek API**.
 
-The agent reads two design documents — `Architecture_Documentation.md` (prose) and `Architecture_View.md` (PlantUML views) — cleans and structures them into a single JSON payload, then asks DeepSeek to generate the full **Space Fractions** project: a Node.js/Express backend, `package.json`, SQL schema, OpenAPI 3.0 specification, Dockerfile, project README and automated tests — writing every file directly into a selectable output folder.
+The agent reads two design documents — `Architecture_Documentation.md` (prose) and `Architecture_View.md` (PlantUML views) — cleans and structures them into a single JSON payload, then generates the full **Space Fractions** backend project — `package.json`, `server.js`, `Dockerfile`, `schema.sql`, `openapi.yaml`, `test.js` and the structured payload — writing every file directly into a selectable output folder. Generation uses the built-in template engine by default, with optional live DeepSeek API generation.
 
 Built with Python + CustomTkinter and shipped as a single-file executable (`DeepSeek_CodeAgent.exe`) that requires **no Python runtime** on target machines.
 
@@ -30,10 +30,10 @@ This tool is a simplified **Code Agent** (in the spirit of Claude Code–style a
 **Key features**
 
 - **Document parser** — extracts heading-aware sections and cleans PlantUML diagrams from the two markdown inputs into a structured JSON payload.
-- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes every returned file in a strict, machine-parsable format.
+- **Two generation modes** — the default built-in template generator writes the 7 project files directly (no network, fully deterministic); optionally, live generation sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages.
 - **Modern dark-mode GUI** — CustomTkinter dashboard with masked API key (show/hide toggle), file and folder pickers, live execution log and staged progress bar.
 - **Background execution** — generation runs in a background thread; the window never freezes.
-- **Safety built in** — path-traversal protection, response-truncation detection, automatic retries and a clearly-labelled offline fallback so the pipeline always produces output.
+- **Safety built in** — path-traversal protection and response-truncation detection for API generations; the built-in mode guarantees output even with no API connectivity.
 - **Single-file executable** — PyInstaller bundles the app, all dependencies, CustomTkinter themes/fonts and Tcl/Tk into one `DeepSeek_CodeAgent.exe`.
 
 ---
@@ -48,12 +48,13 @@ Architecture_Documentation.md ─┐
 Architecture_View.md ──────────┘        (cleaned text + sections + PlantUML)
                                               │
                                               ▼
-                                    agent_core.py  ⇄  DeepSeek API
-                                        stage 1: backend + package.json
-                                        stage 2: SQL schema
-                                        stage 3: OpenAPI + README + .env.example
-                                        stage 4: tests + Dockerfile
-                                              │
+                                         agent_core.py
+                              ┌───────────────┴───────────────┐
+                              ▼                               ▼
+                   built-in templates                 DeepSeek API (optional)
+                   (default mode, 7 files)            4 staged generation calls
+                              │                               │
+                              └───────────────┬───────────────┘
                                               ▼
                                      output/  (generated project files)
 ```
@@ -63,13 +64,13 @@ Architecture_View.md ──────────┘        (cleaned text + se
 | File | Responsibility | Highlights |
 | --- | --- | --- |
 | `parser.py` | Reads both architecture documents, cleans prose/PlantUML, structures everything into a JSON payload | `build_payload()`, `clean_plantuml()`, `extract_sections()`; fence-aware heading detection; standalone CLI included |
-| `agent_core.py` | DeepSeek API client + staged generation engine; writes generated files to the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol with JSON fallback, path-traversal guard, truncation detection, labelled offline fallback |
+| `agent_core.py` | Generation engine with two modes: built-in template generator (default, direct 7-file output) and live DeepSeek API generation (optional) | `write_builtin_project_files()`, `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, path-traversal guard, truncation detection |
 | `main_gui.py` | CustomTkinter desktop dashboard; orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven live log, staged progress, success/fallback/error popups |
 | `build_exe.py` | One-command PyInstaller build for the standalone executable | `--onefile --windowed`, bundles CustomTkinter assets, `parser`/`agent_core`, Tcl/Tk runtime hooks |
 
 ### How the file protocol works
 
-DeepSeek is instructed to answer with one block per file:
+In live API mode, DeepSeek is instructed to answer with one block per file:
 
 ```
 ===FILE: src/server.js===
@@ -127,14 +128,12 @@ The executable is created at `dist\DeepSeek_CodeAgent.exe` — copy it anywhere 
 ## Usage Guide
 
 1. **Launch the application** — `python main_gui.py` (source) or double-click `dist\DeepSeek_CodeAgent.exe`.
-2. **Enter your DeepSeek API key** — the field is masked; use the **Show** checkbox to reveal it. The key is only kept in memory for the session and is never written to disk.
+2. **Enter your DeepSeek API key** *(only needed for live API generation)* — the field is masked; use the **Show** checkbox to reveal it. The key is only kept in memory for the session and is never written to disk.
 3. **Select the Architecture Documentation** — click **Browse…** next to *Architecture Documentation* and choose `Architecture_Documentation.md`.
 4. **Select the Architecture Views** — choose `Architecture_View.md` (PlantUML diagrams).
 5. **Choose the target output directory** — any folder; it is created automatically if missing.
-6. **Click Generate Project Code** — watch the live log and the progress bar:
-   - *Parsing* — both documents are cleaned and structured (a JSON copy is saved as `architecture_payload.json` in the output folder);
-   - *Stages* — DeepSeek generates the backend, SQL schema, documentation and tests in four API calls.
-7. **Review the results** — when the success popup appears, your output folder contains the complete generated project. If the API was unreachable, a warning popup appears and clearly-labelled fallback sample files are written instead (the log shows the exact API error).
+6. **Click Generate Project Code** — watch the live log and the progress bar. By default, the built-in template generator writes the 7 project files (`package.json`, `server.js`, `Dockerfile`, `schema.sql`, `openapi.yaml`, `test.js`, `architecture_payload.json`) instantly; tick **Use DeepSeek API for live generation** to generate the project with the DeepSeek model instead (API key required).
+7. **Review the results** — when the success popup appears ("Generated 7 file(s)"), your output folder contains the complete project. In live-API mode, failures raise an error popup with the exact reason instead of silently writing placeholders.
 
 **Batch/CLI usage (optional)**
 
@@ -224,7 +223,7 @@ CodeAgent_DeepSeek/
 | Problem | Fix |
 | --- | --- |
 | `Missing API key` warning | Enter your DeepSeek API key in the GUI (or set the `DEEPSEEK_API_KEY` environment variable for source runs). |
-| API error popup / failed stages | The log now shows the exact HTTP status and message. Check key validity, internet connection and API credits, then retry. |
+| API error popup (live mode) | The log shows the exact HTTP status and message. Check key validity, internet connection and API credits — or use the default built-in mode, which needs no API. |
 | Wrong model name error | Adjust `DEFAULT_MODEL` in `agent_core.py` to a model available to your DeepSeek account. |
 | `ModuleNotFoundError: tkinter` (source) | Use a full CPython build that includes Tcl/Tk (the python.org installer does by default). |
 | Antivirus flags the one-file exe | Common for freshly built PyInstaller binaries — allow it, or rebuild with `--console` for inspection. |
@@ -234,6 +233,6 @@ CodeAgent_DeepSeek/
 
 ## Notes
 
-- Generation requires a valid DeepSeek API key; usage is billed by DeepSeek according to their pricing.
+- The default built-in generation works fully offline; live DeepSeek generation requires a valid API key (usage is billed by DeepSeek according to their pricing).
 - The API key is never stored: it lives only in the application's memory for the current session (`.env` files are git-ignored for source runs).
 - Generated code is produced by an LLM — review it before using it in production.

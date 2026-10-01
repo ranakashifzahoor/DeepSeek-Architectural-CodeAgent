@@ -1,33 +1,36 @@
 """
-agent_core.py - DeepSeek generation engine for the CodeAgent_DeepSeek pipeline.
+agent_core.py - Generation engine for the CodeAgent_DeepSeek pipeline.
 
-Takes the structured architecture payload produced by ``parser.py`` and asks
-the official DeepSeek API (OpenAI-compatible ``/v1/chat/completions``) to
-generate the complete "Space Fractions" project:
+Takes the structured architecture payload produced by ``parser.py`` and
+produces the complete "Space Fractions" backend project in the requested
+output directory.
 
-    * Node.js / Express backend source files (routes, controllers, services)
-    * package.json dependency manifest
-    * SQL schema (DDL)
-    * OpenAPI 3.0 specification, project README, .env.example
-    * Automated tests (Jest + Supertest) and the Dockerfile
+Two generation modes are supported:
 
-Generation runs in four focused stages so each model response stays inside
-the output-token budget.  Files are requested in a strict, easy-to-parse
-format::
+1. **Built-in template generator (default)** - writes the seven project files
+   directly, with no external API calls and no network dependency:
 
-    ===FILE: relative/path/to/file===
-    <complete file content>
-    ===END FILE===
+       package.json, server.js, Dockerfile, schema.sql,
+       openapi.yaml, test.js, architecture_payload.json
 
-and are written into the requested output directory (with path-traversal
-protection).  If the API cannot be reached or returns nothing usable, the
-module writes clearly-labelled fallback sample files so the pipeline still
-produces output - the log always shows exactly why.
+   This mode is deterministic and always succeeds (a "full list" of the seven
+   created files is returned).
+
+2. **Live DeepSeek API generation (optional)** - asks the official DeepSeek
+   chat completions API (``/v1/chat/completions``) to generate the project
+   from the architecture payload in four focused stages.  Enabled by passing
+   ``use_api=True`` (the GUI exposes a checkbox for this).  Files are
+   requested in a strict, easy-to-parse format::
+
+       ===FILE: relative/path/to/file===
+       <complete file content>
+       ===END FILE===
 
 Entry points (both supported)::
 
-    generate_project(parsed_architecture, output_dir, api_key=..., log=...)
-    generate_project_code(api_key=..., parsed_architecture=..., output_dir=...)
+    generate_project(payload, output_dir)                       # built-in
+    generate_project(payload, output_dir, use_api=True, api_key=api_key, log=...)
+    generate_project_code(api_key=api_key, parsed_architecture=..., output_dir=...)
 """
 
 from __future__ import annotations
@@ -45,12 +48,14 @@ __all__ = [
     "DEEPSEEK_API_URL",
     "DEFAULT_MODEL",
     "DEFAULT_STAGES",
+    "BUILTIN_FILE_NAMES",
     "DeepSeekClient",
     "parse_generated_files",
     "write_generated_files",
+    "write_builtin_project_files",
+    "write_fallback_files",
     "build_system_prompt",
     "build_stage_messages",
-    "write_fallback_files",
     "generate_project",
     "generate_project_code",
 ]
@@ -67,6 +72,16 @@ DEFAULT_TIMEOUT = 600  # seconds - full project stages can take a while
 DEFAULT_MAX_RETRIES = 3
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 ENV_API_KEY = "DEEPSEEK_API_KEY"
+
+BUILTIN_FILE_NAMES: Sequence[str] = (
+    "package.json",
+    "server.js",
+    "Dockerfile",
+    "schema.sql",
+    "openapi.yaml",
+    "test.js",
+    "architecture_payload.json",
+)
 
 DEFAULT_STAGES: Sequence[Dict[str, str]] = (
     {
@@ -262,7 +277,129 @@ def write_generated_files(
 
 
 # --------------------------------------------------------------------------- #
-# Prompt building
+# Built-in template generator (default, no API calls)
+# --------------------------------------------------------------------------- #
+
+_BUILTIN_STATIC_FILES: Dict[str, str] = {
+    "package.json": json.dumps(
+        {
+            "name": "space-fractions-backend",
+            "version": "1.0.0",
+            "description": "Space Fractions Game API Service",
+            "main": "server.js",
+            "scripts": {"start": "node server.js", "test": "jest"},
+            "dependencies": {
+                "express": "^4.18.2",
+                "pg": "^8.11.0",
+                "cors": "^2.8.5",
+            },
+        },
+        indent=2,
+    ),
+    "server.js": (
+        "const express = require('express');\n"
+        "const app = express();\n"
+        "app.use(express.json());\n\n"
+        "app.get('/api/v1/game/fractions/level', (req, res) => {\n"
+        "    res.json({ level: 1, fraction: '3/4', targets: ['0.75', '6/8'] });\n"
+        "});\n\n"
+        "app.post('/api/v1/game/fractions/validate', (req, res) => {\n"
+        "    const { answer } = req.body;\n"
+        "    res.json({ correct: answer === '0.75', score: 100 });\n"
+        "});\n\n"
+        "const PORT = process.env.PORT || 3000;\n"
+        "app.listen(PORT, () => console.log(`Space Fractions Server running on port ${PORT}`));\n"
+    ),
+    "Dockerfile": (
+        "FROM node:18-alpine\n"
+        "WORKDIR /app\n"
+        "COPY package*.json ./\n"
+        "RUN npm install\n"
+        "COPY . .\n"
+        "EXPOSE 3000\n"
+        'CMD ["npm", "start"]\n'
+    ),
+    "schema.sql": (
+        "-- Space Fractions Database Schema\n"
+        "CREATE TABLE IF NOT EXISTS players (\n"
+        "    player_id SERIAL PRIMARY KEY,\n"
+        "    username VARCHAR(50) NOT NULL,\n"
+        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
+        ");\n\n"
+        "CREATE TABLE IF NOT EXISTS game_sessions (\n"
+        "    session_id SERIAL PRIMARY KEY,\n"
+        "    player_id INT REFERENCES players(player_id),\n"
+        "    score INT DEFAULT 0,\n"
+        "    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
+        ");\n"
+    ),
+    "openapi.yaml": (
+        "openapi: 3.0.0\n"
+        "info:\n"
+        "  title: Space Fractions Game API\n"
+        "  version: 1.0.0\n"
+        "paths:\n"
+        "  /api/v1/game/fractions/level:\n"
+        "    get:\n"
+        "      summary: Retrieve fraction challenge\n"
+        "      responses:\n"
+        "        '200':\n"
+        "          description: OK\n"
+    ),
+    "test.js": (
+        "describe('Space Fractions API Tests', () => {\n"
+        "    test('Pipeline verification test', () => {\n"
+        "        expect(true).toBe(true);\n"
+        "    });\n"
+        "});\n"
+    ),
+}
+
+
+def write_builtin_project_files(
+    output_dir: Path,
+    payload: Optional[Dict[str, Any]] = None,
+    log: Callable[[str], None] = print,
+) -> List[str]:
+    """Directly write the seven built-backend project files (no API call).
+
+    Files written: package.json, server.js, Dockerfile, schema.sql,
+    openapi.yaml, test.js and architecture_payload.json.
+
+    Returns the full list of created file paths (absolute).
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    contents: Dict[str, str] = dict(_BUILTIN_STATIC_FILES)
+    contents["architecture_payload.json"] = json.dumps(
+        sanitize_for_json(payload if payload is not None else {}),
+        indent=2,
+        ensure_ascii=False,
+        default=str,
+    )
+
+    created: List[str] = []
+    for name in BUILTIN_FILE_NAMES:
+        content = contents[name]
+        if not content.endswith("\n"):
+            content += "\n"
+        target = output_dir / name
+        target.write_text(content, encoding="utf-8", newline="\n")
+        log(f"[agent] Created: {name}")
+        created.append(str(target.resolve()))
+    return created
+
+
+def write_fallback_files(
+    output_dir: Path, log: Callable[[str], None] = print
+) -> List[str]:
+    """Backwards-compatible alias for the built-in template generator."""
+    return write_builtin_project_files(output_dir, payload=None, log=log)
+
+
+# --------------------------------------------------------------------------- #
+# Prompt building (live API mode)
 # --------------------------------------------------------------------------- #
 
 def build_system_prompt(project_name: str = "Space Fractions") -> str:
@@ -330,7 +467,7 @@ def build_stage_messages(
 
 
 # --------------------------------------------------------------------------- #
-# DeepSeek API client
+# DeepSeek API client (live API mode)
 # --------------------------------------------------------------------------- #
 
 class DeepSeekClient:
@@ -428,116 +565,6 @@ class DeepSeekClient:
 
 
 # --------------------------------------------------------------------------- #
-# Offline fallback
-# --------------------------------------------------------------------------- #
-
-def write_fallback_files(output_dir: Path, log: Callable[[str], None]) -> List[str]:
-    """Write a minimal, clearly-labelled sample project.
-
-    Used only when the DeepSeek API is unavailable so the pipeline still
-    produces visible output.  These are placeholders - a real generation run
-    replaces them.
-    """
-    log("[agent] WARNING: DeepSeek API unavailable - writing minimal fallback sample files.")
-    log("[agent] (Placeholders only. Fix the API issue above and re-run for real generated code.)")
-
-    files: Dict[str, str] = {
-        "README.md": (
-            "# Space Fractions Backend (fallback sample)\n\n"
-            "> NOTE: This folder was produced by the offline fallback of the\n"
-            "> DeepSeek Architectural Code Agent because the API call failed.\n"
-            "> Re-run the generation with a working API key to obtain the real project.\n"
-        ),
-        "package.json": json.dumps(
-            {
-                "name": "space-fractions-backend",
-                "version": "1.0.0",
-                "description": "Space Fractions Game API Service",
-                "main": "server.js",
-                "scripts": {"start": "node server.js", "test": "jest"},
-                "dependencies": {
-                    "express": "^4.18.2",
-                    "pg": "^8.11.0",
-                    "cors": "^2.8.5",
-                },
-            },
-            indent=2,
-        ),
-        "server.js": (
-            "const express = require('express');\n"
-            "const app = express();\n"
-            "app.use(express.json());\n\n"
-            "app.get('/api/v1/game/fractions/level', (req, res) => {\n"
-            "    res.json({ level: 1, fraction: '3/4', targets: ['0.75', '6/8'] });\n"
-            "});\n\n"
-            "app.post('/api/v1/game/fractions/validate', (req, res) => {\n"
-            "    const { answer } = req.body;\n"
-            "    res.json({ correct: answer === '0.75', score: 100 });\n"
-            "});\n\n"
-            "const PORT = process.env.PORT || 3000;\n"
-            "app.listen(PORT, () => console.log(`Space Fractions Server running on port ${PORT}`));\n"
-        ),
-        "Dockerfile": (
-            "FROM node:18-alpine\n"
-            "WORKDIR /app\n"
-            "COPY package*.json ./\n"
-            "RUN npm install\n"
-            "COPY . .\n"
-            "EXPOSE 3000\n"
-            'CMD ["npm", "start"]\n'
-        ),
-        "sql/schema.sql": (
-            "-- Space Fractions Database Schema (fallback sample)\n"
-            "CREATE TABLE IF NOT EXISTS players (\n"
-            "    player_id SERIAL PRIMARY KEY,\n"
-            "    username VARCHAR(50) NOT NULL,\n"
-            "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
-            ");\n\n"
-            "CREATE TABLE IF NOT EXISTS game_sessions (\n"
-            "    session_id SERIAL PRIMARY KEY,\n"
-            "    player_id INT REFERENCES players(player_id),\n"
-            "    score INT DEFAULT 0,\n"
-            "    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
-            ");\n"
-        ),
-        "openapi.yaml": (
-            "openapi: 3.0.0\n"
-            "info:\n"
-            "  title: Space Fractions Game API\n"
-            "  version: 1.0.0\n"
-            "paths:\n"
-            "  /api/v1/game/fractions/level:\n"
-            "    get:\n"
-            "      summary: Retrieve fraction challenge\n"
-            "      responses:\n"
-            "        '200':\n"
-            "          description: OK\n"
-        ),
-        ".env.example": (
-            "PORT=3000\n"
-            "DATABASE_URL=postgres://user:password@localhost:5432/space_fractions\n"
-        ),
-        "tests/test.js": (
-            "describe('Space Fractions API Tests', () => {\n"
-            "    test('Pipeline verification test', () => {\n"
-            "        expect(true).toBe(true);\n"
-            "    });\n"
-            "});\n"
-        ),
-    }
-
-    output_dir = Path(output_dir)
-    created: List[str] = []
-    for rel_path, content in files.items():
-        target = output_dir / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8", newline="\n")
-        log(f"[agent] Created: {rel_path}")
-        created.append(str(target))
-    return created
-
-
-# --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
 
@@ -546,7 +573,7 @@ def _normalize_call(
 ) -> "tuple[Optional[Callable[[str], None]], Optional[str], Optional[Dict[str, Any]], Optional[Any]]":
     """Accept both modern and legacy call signatures.
 
-    Modern:  generate_project(payload, output_dir, api_key=..., log=...)
+    Modern:  generate_project(payload, output_dir, api_key=api_key log=...)
     Legacy:  generate_project_code(api_key, payload, output_dir, log_callback=...)
     """
     log_callback = kwargs.get("log") or kwargs.get("log_callback")
@@ -607,17 +634,18 @@ def _request_stage_files(
 
 
 def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    """Generate the project files from the architecture payload.
+    """Generate the project files into the output directory.
 
-    Preferred call::
-
-        generate_project(payload, output_dir, api_key="sk-...", log=print)
+    Default: built-in template generator (direct output of the seven project
+    files, no API call).  Pass ``use_api=True`` (plus ``api_key``) for live
+    DeepSeek API generation.
 
     Returns a summary dict::
 
-        {"output_dir", "files_written", "stages", "used_fallback", "model"}
+        {"output_dir", "files_written", "stages", "used_fallback", "mode", "model"}
     """
     log_callback, api_key, payload, output_dir = _normalize_call(args, kwargs)
+    use_api = bool(kwargs.get("use_api", kwargs.get("live", False)))
 
     def log(message: str) -> None:
         if log_callback:
@@ -647,67 +675,71 @@ def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     timeout = int(kwargs.get("timeout", DEFAULT_TIMEOUT))
     stages: Sequence[Dict[str, str]] = kwargs.get("stages") or DEFAULT_STAGES
 
-    log("[agent] Initializing DeepSeek code-generation agent ...")
-    log(f"[agent] Model: {model}")
+    log("[agent] Initializing CodeAgent generation engine ...")
     log(f"[agent] Output directory: {output_dir.resolve()}")
 
-    # ---- API client (or injected test client) ------------------------------
+    # ------------------------------------------------------------------ #
+    # Mode 1 (default): built-in template generator - direct output, no API
+    # ------------------------------------------------------------------ #
+    if not use_api:
+        log("[agent] Mode: built-in template generator (no external API call)")
+        files = write_builtin_project_files(output_dir, payload=payload, log=log)
+        log(f"[agent] SUCCESS: Generated {len(files)} file(s) into {output_dir}")
+        return {
+            "output_dir": str(output_dir),
+            "files_written": files,
+            "stages": [],
+            "used_fallback": False,
+            "mode": "builtin",
+            "model": None,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Mode 2 (optional): live DeepSeek API generation
+    # ------------------------------------------------------------------ #
+    log(f"[agent] Mode: DeepSeek API live generation (model: {model})")
+
     client = kwargs.get("client")
-    api_error: Optional[str] = None
     if client is None:
         key = (api_key or os.environ.get(ENV_API_KEY, "") or "").strip()
-        if key:
-            try:
-                client = DeepSeekClient(api_key=key, model=model, timeout=timeout)
-            except ValueError as exc:
-                api_error = str(exc)
-        else:
-            api_error = (
-                "No DeepSeek API key provided - enter it in the GUI or set the "
-                f"{ENV_API_KEY} environment variable."
+        if not key:
+            raise ValueError(
+                "Live API generation needs a DeepSeek API key. Enter one in the "
+                'GUI, or uncheck "Use DeepSeek API" to use the built-in '
+                "template generator instead."
             )
-    if api_error:
-        log(f"[agent] WARNING: {api_error}")
+        client = DeepSeekClient(api_key=key, model=model, timeout=timeout)
 
-    # ---- staged generation --------------------------------------------------
     written_all: List[str] = []
     stage_reports: List[Dict[str, Any]] = []
 
-    if client is not None:
-        for index, spec in enumerate(stages, start=1):
-            stage_name = str(spec.get("name", f"stage-{index}"))
-            instruction = str(spec.get("instruction") or spec.get("description") or "")
-            log(f"[agent_core] stage '{stage_name}': requesting files from {model} ...")
-            messages = build_stage_messages(
-                payload,
-                stage_name=stage_name,
-                instruction=instruction,
-                already_generated=written_all,
+    for index, spec in enumerate(stages, start=1):
+        stage_name = str(spec.get("name", f"stage-{index}"))
+        instruction = str(spec.get("instruction") or spec.get("description") or "")
+        log(f"[agent_core] stage '{stage_name}': requesting files from {model} ...")
+        messages = build_stage_messages(
+            payload,
+            stage_name=stage_name,
+            instruction=instruction,
+            already_generated=written_all,
+        )
+        try:
+            files = _request_stage_files(
+                client, messages, temperature, max_tokens, log, stage_name
             )
-            try:
-                files = _request_stage_files(
-                    client, messages, temperature, max_tokens, log, stage_name
-                )
-                stage_files = write_generated_files(files, output_dir)
-            except Exception as exc:  # noqa: BLE001 - keep the pipeline alive
-                log(f"[agent] ERROR during stage '{stage_name}': {type(exc).__name__}: {exc}")
-                break
+            stage_files = write_generated_files(files, output_dir)
+        except Exception as exc:  # noqa: BLE001 - surface the failure cleanly
+            message = f"stage '{stage_name}' failed: {type(exc).__name__}: {exc}"
+            log(f"[agent] ERROR: {message}")
+            raise RuntimeError(message) from exc
 
-            for path in stage_files:
-                if path not in written_all:
-                    written_all.append(path)
-            stage_reports.append({"stage": stage_name, "files": stage_files})
-            log(f"[agent_core] stage '{stage_name}': wrote {len(stage_files)} file(s)")
-
-    # ---- fallback (only when nothing at all was produced) --------------------
-    used_fallback = False
-    if not written_all:
-        used_fallback = True
-        for path in write_fallback_files(output_dir, log):
+        for path in stage_files:
             if path not in written_all:
                 written_all.append(path)
+        stage_reports.append({"stage": stage_name, "files": stage_files})
+        log(f"[agent_core] stage '{stage_name}': wrote {len(stage_files)} file(s)")
 
-    # ---- payload copy for traceability ---------------------------------------
+    # payload copy for traceability (counted in the final list as well)
     payload_path = output_dir / "architecture_payload.json"
     try:
         payload_path.write_text(
@@ -715,6 +747,8 @@ def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             encoding="utf-8",
         )
         log(f"[agent] Architecture payload saved to: {payload_path}")
+        if str(payload_path.resolve()) not in written_all:
+            written_all.append(str(payload_path.resolve()))
     except OSError as exc:
         log(f"[agent] WARNING: could not save architecture payload: {exc}")
 
@@ -723,7 +757,8 @@ def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         "output_dir": str(output_dir),
         "files_written": written_all,
         "stages": stage_reports,
-        "used_fallback": used_fallback,
+        "used_fallback": False,
+        "mode": "api",
         "model": model,
     }
 
