@@ -31,9 +31,9 @@ This tool is a simplified **Code Agent** (in the spirit of Claude Code–style a
 
 - **Document parser** — extracts heading-aware sections and cleans PlantUML diagrams from the two markdown inputs into a structured JSON payload.
 - **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes every returned file in a strict, machine-parsable format.
-- **Polished dark console UI** — CustomTkinter dashboard with a DeepSeek-blue accent, masked API key (show/hide toggle), file and folder pickers, terminal-style execution log and staged progress bar.
+- **Polished modern UI** — CustomTkinter dashboard with an emerald-and-white theme, masked API key (show/hide toggle), file and folder pickers, colored execution log and staged progress bar.
 - **Background execution** — generation runs in a background thread; the window never freezes.
-- **Safety built in** — path-traversal protection, response-truncation detection and automatic retries with backoff, so failures are never silent.
+- **Safety built in** — path-traversal protection, response-truncation recovery (incomplete API responses are salvaged or completed with fallback files) and automatic retries with backoff.
 - **Single-file executable** — PyInstaller bundles the app, all dependencies, CustomTkinter themes/fonts and Tcl/Tk into one `DeepSeek_CodeAgent.exe`.
 
 ---
@@ -63,8 +63,8 @@ Architecture_View.md ──────────┘        (cleaned text + se
 | File | Responsibility | Highlights |
 | --- | --- | --- |
 | `parser.py` | Reads both architecture documents, cleans prose/PlantUML, structures everything into a JSON payload | `build_payload()`, `clean_plantuml()`, `extract_sections()`; fence-aware heading detection; standalone CLI included |
-| `agent_core.py` | DeepSeek API client + staged generation engine; writes every generated file into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, path-traversal guard, truncation detection |
-| `main_gui.py` | CustomTkinter desktop dashboard (refined dark console theme); orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven colored log panel, staged progress, success and error popups |
+| `agent_core.py` | DeepSeek API client + staged generation engine; writes every generated file into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, path-traversal guard, truncation detection with automatic recovery |
+| `main_gui.py` | CustomTkinter desktop dashboard (modern emerald-and-white theme); orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven colored log panel, staged progress, success and error popups |
 | `build_exe.py` | One-command PyInstaller build for the standalone executable | `--onefile --windowed`, bundles CustomTkinter assets, `parser`/`agent_core`, Tcl/Tk runtime hooks |
 
 ### How the file protocol works
@@ -77,7 +77,7 @@ DeepSeek is instructed to answer with one block per file:
 ===END FILE===
 ```
 
-The engine validates the block structure (detecting truncated responses), de-fences any stray markdown, refuses absolute or escaping paths, and writes the files into the chosen output folder. A JSON file-mapping response is also accepted as a fallback for robustness.
+The engine validates the block structure (truncated responses are salvaged by closing open file streams, and the set is completed with fallback files when needed), de-fences any stray markdown, refuses absolute or escaping paths, and writes the files into the chosen output folder. A JSON file-mapping response is also accepted for robustness.
 
 ### PyInstaller compilation
 
@@ -225,6 +225,7 @@ CodeAgent_DeepSeek/
 | --- | --- |
 | `Missing API key` warning | Enter your DeepSeek API key in the GUI (or set the `DEEPSEEK_API_KEY` environment variable for source runs). |
 | API error popup | The log shows the exact HTTP status and message. Check key validity, internet connection and API credits, then retry. |
+| Incomplete / truncated API response | Handled automatically: the agent salvages partial files and completes the missing set with fallback files; details appear in the log. |
 | Wrong model name error | Adjust `DEFAULT_MODEL` in `agent_core.py` to a model available to your DeepSeek account. |
 | `ModuleNotFoundError: tkinter` (source) | Use a full CPython build that includes Tcl/Tk (the python.org installer does by default). |
 | Antivirus flags the one-file exe | Common for freshly built PyInstaller binaries — allow it, or rebuild with `--console` for inspection. |

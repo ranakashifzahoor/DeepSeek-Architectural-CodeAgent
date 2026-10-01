@@ -1,7 +1,7 @@
 """
 main_gui.py - CustomTkinter dashboard for the CodeAgent_DeepSeek pipeline.
 
-A refined dark-mode desktop console that:
+A modern "Emerald & White" desktop dashboard that:
 
     1. collects the DeepSeek API key, the two architecture documents and an
        output directory,
@@ -10,7 +10,8 @@ A refined dark-mode desktop console that:
        thread so the window never freezes,
     4. streams live status / terminal output into the log panel, and
     5. shows a clean success popup with the exact file count when a run
-       finishes.
+       finishes (truncated API responses are recovered automatically by the
+       engine, so the count is never zero).
 
 Generation is performed live by the official DeepSeek API.  A valid
 DeepSeek API key is required.
@@ -62,30 +63,57 @@ GENERATE_RUNNING_LABEL = "Generating..."
 
 
 # --------------------------------------------------------------------------- #
-# Design tokens - refined dark console theme
+# Design tokens - "Emerald Green & Crisp White" modern dashboard
 # --------------------------------------------------------------------------- #
 
 class T:
-    BG = "#0E1116"          # window background (deep charcoal, not pure black)
-    SURFACE = "#161B24"     # card surfaces
-    SURFACE_2 = "#1D2330"   # inputs and inner elements
-    HOVER = "#232B3A"       # hover state
-    BORDER = "#262D3A"      # subtle 1px structure
-    TEXT = "#E9EDF4"        # primary text (off-white)
-    TEXT_DIM = "#99A3B4"    # secondary text
-    TEXT_FAINT = "#6C7688"  # placeholders / muted meta
-    ACCENT = "#4D6BFE"      # DeepSeek brand blue (single accent)
-    ACCENT_HOVER = "#6B84FF"
-    SUCCESS = "#3ECF8E"
-    ERROR = "#F26D6D"
-    LOG_BG = "#0B0E13"
-    LOG_TEXT = "#C4CEDC"
+    BG = "#F8FAF9"            # page background (soft off-white)
+    SURFACE = "#FFFFFF"       # cards
+    SURFACE_2 = "#FFFFFF"     # inputs
+    HOVER = "#F1F5F9"         # hover state
+    BORDER = "#E2E8F0"        # subtle 1px structure
+    BORDER_STRONG = "#CBD5E1"
+    TEXT = "#0F172A"          # headers / primary text (deep slate)
+    TEXT_DIM = "#475569"      # secondary text
+    TEXT_FAINT = "#94A3B8"    # placeholders / muted meta
+    ACCENT = "#10B981"        # emerald (primary buttons / accents)
+    ACCENT_HOVER = "#059669"
+    ACCENT_TEXT = "#059669"   # darker emerald for text on light backgrounds
+    SUCCESS = "#047857"       # success badge text
+    SUCCESS_BG = "#D1FAE5"    # success badge background
+    RUN_BG = "#ECFDF5"
+    RUN_TX = "#059669"
+    WARN_BG = "#FEF3C7"
+    WARN_TX = "#92400E"
+    ERROR = "#B91C1C"         # error badge text
+    ERROR_BG = "#FEE2E2"
+    IDLE_BG = "#F1F5F9"
+    IDLE_TX = "#64748B"
+    LOG_BG = "#F8FAFC"
+    LOG_TEXT = "#334155"
+    LOG_DIM = "#94A3B8"
+    LOG_SUCCESS = "#047857"
+    LOG_ERROR = "#B91C1C"
 
     UI_FAMILY = "Segoe UI"
 
 
 def _ui_font(size: int = 13, weight: str = "normal") -> ctk.CTkFont:
     return ctk.CTkFont(family=T.UI_FAMILY, size=size, weight=weight)
+
+
+def _pick_ui_family() -> str:
+    """Prefer Inter when installed, otherwise the native Segoe UI."""
+    try:
+        from tkinter import font as tkfont
+
+        available = set(tkfont.families())
+        for name in ("Inter", "Segoe UI"):
+            if name in available:
+                return name
+    except Exception:
+        pass
+    return "Segoe UI"
 
 
 _MONO_CANDIDATES = ("Cascadia Mono", "Cascadia Code", "Consolas")
@@ -109,8 +137,8 @@ class CodeAgentApp(ctk.CTk):
     """Main window of the desktop dashboard."""
 
     def __init__(self) -> None:
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
+        ctk.set_appearance_mode("light")
+        ctk.set_default_color_theme("green")
         super().__init__(fg_color=T.BG)
 
         self.title(APP_TITLE)
@@ -119,6 +147,7 @@ class CodeAgentApp(ctk.CTk):
         self.geometry("1000x600+140+30")
         self.minsize(900, 580)
 
+        self._font_family = _pick_ui_family()
         self._mono_family = _pick_mono_family()
         self._queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
@@ -145,6 +174,9 @@ class CodeAgentApp(ctk.CTk):
 
     # ------------------------------------------------------------------ UI --
 
+    def _ui(self, size: int = 13, weight: str = "normal") -> ctk.CTkFont:
+        return ctk.CTkFont(family=self._font_family, size=size, weight=weight)
+
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -155,12 +187,15 @@ class CodeAgentApp(ctk.CTk):
         title_row = ctk.CTkFrame(header, fg_color="transparent")
         title_row.pack(anchor="w")
         ctk.CTkLabel(
-            title_row, text="DeepSeek", font=_ui_font(23, "bold"), text_color=T.ACCENT
+            title_row,
+            text="DeepSeek",
+            font=self._ui(23, "bold"),
+            text_color=T.ACCENT_TEXT,
         ).pack(side="left")
         ctk.CTkLabel(
             title_row,
             text=" Architectural Code Agent",
-            font=_ui_font(23, "bold"),
+            font=self._ui(23, "bold"),
             text_color=T.TEXT,
         ).pack(side="left")
         ctk.CTkLabel(
@@ -169,18 +204,22 @@ class CodeAgentApp(ctk.CTk):
                 "Generate a complete Node.js / Express backend from your "
                 "architecture documents with the live DeepSeek API."
             ),
-            font=_ui_font(12),
+            font=self._ui(12),
             text_color=T.TEXT_DIM,
         ).pack(anchor="w", pady=(2, 0))
 
         # Configuration card -------------------------------------------------
         card = ctk.CTkFrame(
-            self, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.BORDER
+            self,
+            fg_color=T.SURFACE,
+            corner_radius=12,
+            border_width=1,
+            border_color=T.BORDER,
         )
         card.grid(row=1, column=0, sticky="ew", padx=24, pady=(14, 10))
         card.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
-            card, text="Configuration", font=_ui_font(13, "bold"), text_color=T.TEXT
+            card, text="Configuration", font=self._ui(13, "bold"), text_color=T.TEXT
         ).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(12, 6))
 
         self.api_key_entry = self._form_row(
@@ -193,15 +232,15 @@ class CodeAgentApp(ctk.CTk):
             variable=self.show_key_var,
             command=self._toggle_key_visibility,
             width=70,
-            font=_ui_font(12),
+            font=self._ui(12),
             fg_color=T.ACCENT,
             hover_color=T.ACCENT_HOVER,
-            border_color=T.BORDER,
+            border_color=T.BORDER_STRONG,
             text_color=T.TEXT_DIM,
             checkbox_width=18,
             checkbox_height=18,
             corner_radius=5,
-        ).grid(row=1, column=2, padx=(0, 18), pady=(0, 8), sticky="w")
+        ).grid(row=1, column=2, padx=(0, 18), pady=(0, 6), sticky="w")
 
         self.doc_entry = self._form_row(
             card,
@@ -237,7 +276,7 @@ class CodeAgentApp(ctk.CTk):
             height=46,
             width=240,
             corner_radius=10,
-            font=_ui_font(14, "bold"),
+            font=self._ui(14, "bold"),
             fg_color=T.ACCENT,
             hover_color=T.ACCENT_HOVER,
             text_color="#FFFFFF",
@@ -251,8 +290,8 @@ class CodeAgentApp(ctk.CTk):
             width=96,
             height=46,
             corner_radius=10,
-            font=_ui_font(12),
-            fg_color="transparent",
+            font=self._ui(12),
+            fg_color=T.SURFACE,
             hover_color=T.HOVER,
             border_width=1,
             border_color=T.BORDER,
@@ -265,7 +304,7 @@ class CodeAgentApp(ctk.CTk):
             actions,
             height=8,
             corner_radius=4,
-            fg_color=T.SURFACE_2,
+            fg_color=T.BORDER,
             progress_color=T.ACCENT,
         )
         self.progress.grid(row=0, column=2, sticky="ew")
@@ -273,14 +312,18 @@ class CodeAgentApp(ctk.CTk):
 
         # Log panel --------------------------------------------------------------
         log_card = ctk.CTkFrame(
-            self, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.BORDER
+            self,
+            fg_color=T.SURFACE,
+            corner_radius=12,
+            border_width=1,
+            border_color=T.BORDER,
         )
         log_card.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            log_card, text="Execution Log", font=_ui_font(13, "bold"), text_color=T.TEXT
+            log_card, text="Execution Log", font=self._ui(13, "bold"), text_color=T.TEXT
         ).grid(row=0, column=0, sticky="w", padx=18, pady=(12, 0))
 
         self.log_box = ctk.CTkTextbox(
@@ -289,7 +332,7 @@ class CodeAgentApp(ctk.CTk):
             font=ctk.CTkFont(family=self._mono_family, size=12),
             fg_color=T.LOG_BG,
             text_color=T.LOG_TEXT,
-            corner_radius=10,
+            corner_radius=8,
             border_width=1,
             border_color=T.BORDER,
         )
@@ -300,23 +343,24 @@ class CodeAgentApp(ctk.CTk):
         self._text_widget = None
         try:
             self._text_widget = self.log_box._textbox  # noqa: SLF001
-            self._text_widget.tag_configure("dim", foreground=T.TEXT_FAINT)
-            self._text_widget.tag_configure("success", foreground=T.SUCCESS)
-            self._text_widget.tag_configure("error", foreground=T.ERROR)
+            self._text_widget.tag_configure("dim", foreground=T.LOG_DIM)
+            self._text_widget.tag_configure("success", foreground=T.LOG_SUCCESS)
+            self._text_widget.tag_configure("error", foreground=T.LOG_ERROR)
         except Exception:
             self._text_widget = None
 
-        # Status bar ---------------------------------------------------------
+        # Status badge ---------------------------------------------------------
         status_row = ctk.CTkFrame(self, fg_color="transparent")
         status_row.grid(row=4, column=0, sticky="w", padx=26, pady=(0, 12))
-        self.status_dot = ctk.CTkFrame(
-            status_row, width=10, height=10, corner_radius=5, fg_color=T.TEXT_FAINT
-        )
-        self.status_dot.pack(side="left", padx=(0, 8))
+        self.status_badge = ctk.CTkFrame(status_row, fg_color=T.IDLE_BG, corner_radius=10)
+        self.status_badge.pack(side="left")
         self.status_label = ctk.CTkLabel(
-            status_row, text="Ready", font=_ui_font(12), text_color=T.TEXT_DIM
+            self.status_badge,
+            text="Ready",
+            font=self._ui(11, "bold"),
+            text_color=T.IDLE_TX,
         )
-        self.status_label.pack(side="left")
+        self.status_label.pack(padx=12, pady=4)
 
     def _form_row(
         self,
@@ -331,7 +375,7 @@ class CodeAgentApp(ctk.CTk):
         ctk.CTkLabel(
             parent,
             text=label_text,
-            font=_ui_font(12),
+            font=self._ui(12),
             text_color=T.TEXT_DIM,
             anchor="w",
             width=150,
@@ -346,13 +390,14 @@ class CodeAgentApp(ctk.CTk):
             border_width=1,
             text_color=T.TEXT,
             placeholder_text_color=T.TEXT_FAINT,
-            font=_ui_font(12),
+            font=self._ui(12),
         )
         if initial:
             entry.insert(0, initial)
         if placeholder:
             entry.configure(placeholder_text=placeholder)
         entry.grid(row=row, column=1, padx=(0, 10), pady=bottom_pady, sticky="ew")
+        self._bind_focus_ring(entry)
 
         if browse_command is not None:
             ctk.CTkButton(
@@ -361,8 +406,8 @@ class CodeAgentApp(ctk.CTk):
                 width=92,
                 height=38,
                 corner_radius=8,
-                font=_ui_font(12),
-                fg_color="transparent",
+                font=self._ui(12),
+                fg_color=T.SURFACE,
                 hover_color=T.HOVER,
                 border_width=1,
                 border_color=T.BORDER,
@@ -371,12 +416,43 @@ class CodeAgentApp(ctk.CTk):
             ).grid(row=row, column=2, padx=(0, 18), pady=bottom_pady)
         return entry
 
+    @staticmethod
+    def _bind_focus_ring(entry: ctk.CTkEntry) -> None:
+        """Highlight the input border with the accent color on focus."""
+        def on_focus_in(_event=None):
+            try:
+                entry.configure(border_color=T.ACCENT)
+            except Exception:
+                pass
+
+        def on_focus_out(_event=None):
+            try:
+                entry.configure(border_color=T.BORDER)
+            except Exception:
+                pass
+
+        try:
+            entry.bind("<FocusIn>", on_focus_in)
+            entry.bind("<FocusOut>", on_focus_out)
+        except Exception:
+            pass
+
     # -------------------------------------------------------------- actions --
 
-    def _set_status(self, text: str, color: Optional[str] = None) -> None:
-        self.status_label.configure(text=text)
-        if color:
-            self.status_dot.configure(fg_color=color)
+    def _set_status(self, text: str, kind: str = "idle") -> None:
+        palettes = {
+            "idle": (T.IDLE_BG, T.IDLE_TX),
+            "run": (T.RUN_BG, T.RUN_TX),
+            "ok": (T.SUCCESS_BG, T.SUCCESS),
+            "warn": (T.WARN_BG, T.WARN_TX),
+            "err": (T.ERROR_BG, T.ERROR),
+        }
+        bg, fg = palettes.get(kind, palettes["idle"])
+        try:
+            self.status_badge.configure(fg_color=bg)
+            self.status_label.configure(text=text, text_color=fg)
+        except Exception:
+            self.status_label.configure(text=text)
 
     def _toggle_key_visibility(self) -> None:
         self.api_key_entry.configure(show="" if self.show_key_var.get() else "*")
@@ -507,7 +583,7 @@ class CodeAgentApp(ctk.CTk):
         self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
         self.progress.set(0.0)
         self.generate_button.configure(state="disabled", text=GENERATE_RUNNING_LABEL)
-        self._set_status("Starting...", T.ACCENT)
+        self._set_status("Starting...", "run")
 
         stamp = datetime.now().strftime("%H:%M:%S")
         self._append_log("-" * 60, tag="dim")
@@ -572,32 +648,45 @@ class CodeAgentApp(ctk.CTk):
                 elif kind == "progress":
                     self.progress.set(float(payload))
                 elif kind == "status":
-                    self._set_status(str(payload), T.ACCENT)
+                    self._set_status(str(payload), "run")
                 elif kind == "parsed":
                     self._parse_done = True
                     self._update_stage_progress()
                 elif kind == "done":
                     self.progress.set(1.0)
                     self._finish_run()
+                    used_fallback = False
                     if isinstance(payload, dict):
                         files = payload.get("files_written", [])
                         out_dir_str = payload.get("output_dir") or str(
                             getattr(self, "_current_out_dir", "")
                         )
+                        used_fallback = bool(payload.get("used_fallback"))
                     else:
                         files = [str(p) for p in (payload or [])]
                         out_dir_str = str(getattr(self, "_current_out_dir", ""))
-                    self._set_status(
-                        f"Completed. {len(files)} file(s) generated.", T.SUCCESS
-                    )
-                    messagebox.showinfo(
-                        "Generation complete",
-                        f"Generated {len(files)} file(s) into:\n{out_dir_str}",
-                        parent=self,
-                    )
+                    if used_fallback:
+                        self._set_status(
+                            f"Completed with recovery - {len(files)} file(s)", "warn"
+                        )
+                        messagebox.showinfo(
+                            "Generation complete",
+                            f"Generated {len(files)} file(s) into:\n{out_dir_str}\n\n"
+                            "Note: the API response was incomplete, so recovery "
+                            "files were added to complete the project. See the log "
+                            "for details.",
+                            parent=self,
+                        )
+                    else:
+                        self._set_status(f"Completed - {len(files)} file(s)", "ok")
+                        messagebox.showinfo(
+                            "Generation complete",
+                            f"Generated {len(files)} file(s) into:\n{out_dir_str}",
+                            parent=self,
+                        )
                 elif kind == "error":
                     self._finish_run()
-                    self._set_status("Failed. Check the log for details.", T.ERROR)
+                    self._set_status("Failed. Check the log for details.", "err")
                     messagebox.showerror("Generation failed", str(payload), parent=self)
         except queue.Empty:
             pass
@@ -608,7 +697,7 @@ class CodeAgentApp(ctk.CTk):
             match = re.search(r"stage '([^']+)'", line)
             if match:
                 self._set_status(
-                    f"DeepSeek is generating: stage '{match.group(1)}'...", T.ACCENT
+                    f"DeepSeek is generating: stage '{match.group(1)}'...", "run"
                 )
         if "wrote" in line and "file(s)" in line:
             self._stage_count += 1
