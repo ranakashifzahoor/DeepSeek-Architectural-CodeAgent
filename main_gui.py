@@ -1,22 +1,19 @@
 """
 main_gui.py - CustomTkinter dashboard for the CodeAgent_DeepSeek pipeline.
 
-A modern dark-mode desktop UI that:
+A refined dark-mode desktop console that:
 
     1. collects the DeepSeek API key, the two architecture documents and an
        output directory,
     2. parses the documents with ``parser.py``,
-    3. runs the generation (``agent_core.py``) in a background thread so the
-       window never freezes,
+    3. runs the live DeepSeek generation (``agent_core.py``) in a background
+       thread so the window never freezes,
     4. streams live status / terminal output into the log panel, and
     5. shows a clean success popup with the exact file count when a run
        finishes.
 
-Generation modes:
-    * Built-in template generator (default) - writes the 7 project files
-      directly, no API call, no network required.
-    * Live DeepSeek API generation - optional; tick the checkbox and provide
-      an API key.
+Generation is performed live by the official DeepSeek API.  A valid
+DeepSeek API key is required.
 
 Run with::
 
@@ -60,14 +57,52 @@ import parser as arch_parser  # noqa: E402  (imported after sys.path setup)
 __all__ = ["CodeAgentApp", "main"]
 
 APP_TITLE = "DeepSeek Architectural Code Agent"
-ACCENT = "#2F6FED"
-ACCENT_HOVER = "#2559C9"
-
 GENERATE_LABEL = "Generate Project Code"
 GENERATE_RUNNING_LABEL = "Generating..."
 
-MODE_BUILTIN_TEXT = "Generating project files (built-in templates)..."
-MODE_API_TEXT = "Generating project files with DeepSeek..."
+
+# --------------------------------------------------------------------------- #
+# Design tokens - refined dark console theme
+# --------------------------------------------------------------------------- #
+
+class T:
+    BG = "#0E1116"          # window background (deep charcoal, not pure black)
+    SURFACE = "#161B24"     # card surfaces
+    SURFACE_2 = "#1D2330"   # inputs and inner elements
+    HOVER = "#232B3A"       # hover state
+    BORDER = "#262D3A"      # subtle 1px structure
+    TEXT = "#E9EDF4"        # primary text (off-white)
+    TEXT_DIM = "#99A3B4"    # secondary text
+    TEXT_FAINT = "#6C7688"  # placeholders / muted meta
+    ACCENT = "#4D6BFE"      # DeepSeek brand blue (single accent)
+    ACCENT_HOVER = "#6B84FF"
+    SUCCESS = "#3ECF8E"
+    ERROR = "#F26D6D"
+    LOG_BG = "#0B0E13"
+    LOG_TEXT = "#C4CEDC"
+
+    UI_FAMILY = "Segoe UI"
+
+
+def _ui_font(size: int = 13, weight: str = "normal") -> ctk.CTkFont:
+    return ctk.CTkFont(family=T.UI_FAMILY, size=size, weight=weight)
+
+
+_MONO_CANDIDATES = ("Cascadia Mono", "Cascadia Code", "Consolas")
+
+
+def _pick_mono_family() -> str:
+    """Pick the best available monospace family for the log panel."""
+    try:
+        from tkinter import font as tkfont
+
+        available = set(tkfont.families())
+        for name in _MONO_CANDIDATES:
+            if name in available:
+                return name
+    except Exception:
+        pass
+    return "Consolas"
 
 
 class CodeAgentApp(ctk.CTk):
@@ -76,18 +111,21 @@ class CodeAgentApp(ctk.CTk):
     def __init__(self) -> None:
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
-        super().__init__()
+        super().__init__(fg_color=T.BG)
 
         self.title(APP_TITLE)
-        self.geometry("1000x780")
-        self.minsize(880, 680)
+        # Window size tuned to fit 720p-class workspaces; CustomTkinter
+        # multiplies these values by the display DPI factor on Windows.
+        self.geometry("1000x600+140+30")
+        self.minsize(900, 580)
 
+        self._mono_family = _pick_mono_family()
         self._queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
         self._running = False
         self._stage_count = 0
         self._parse_done = False
-        self._total_steps = 2
+        self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
         self._current_out_dir = ""
 
         self._build_ui()
@@ -95,12 +133,14 @@ class CodeAgentApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._append_log(
-            '[gui] Ready. Select the two architecture documents and an output '
-            'folder, then click "Generate Project Code".'
+            "[gui] Ready. Select the two architecture documents and an output "
+            'folder, then click "Generate Project Code".',
+            tag="dim",
         )
         self._append_log(
-            "[gui] Default mode: built-in template generator (7 files, no API "
-            "call). Tick the box for live DeepSeek API generation."
+            "[gui] Generation runs live on the DeepSeek API "
+            "(4 stages: backend, database, docs, tests).",
+            tag="dim",
         )
 
     # ------------------------------------------------------------------ UI --
@@ -109,179 +149,237 @@ class CodeAgentApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
 
-        # Header --------------------------------------------------------------
+        # Header ------------------------------------------------------------
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 2))
-        header.grid_columnconfigure(0, weight=1)
-
+        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 4))
+        title_row = ctk.CTkFrame(header, fg_color="transparent")
+        title_row.pack(anchor="w")
         ctk.CTkLabel(
-            header,
-            text=APP_TITLE,
-            font=ctk.CTkFont(size=24, weight="bold"),
-        ).grid(row=0, column=0, sticky="w")
-
+            title_row, text="DeepSeek", font=_ui_font(23, "bold"), text_color=T.ACCENT
+        ).pack(side="left")
+        ctk.CTkLabel(
+            title_row,
+            text=" Architectural Code Agent",
+            font=_ui_font(23, "bold"),
+            text_color=T.TEXT,
+        ).pack(side="left")
         ctk.CTkLabel(
             header,
             text=(
-                "Parse architecture docs and generate the Space Fractions "
-                "backend project (Node.js / Express, Docker, SQL, OpenAPI, "
-                "tests)."
+                "Generate a complete Node.js / Express backend from your "
+                "architecture documents with the live DeepSeek API."
             ),
-            font=ctk.CTkFont(size=13),
-            text_color=("gray35", "gray65"),
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+            font=_ui_font(12),
+            text_color=T.TEXT_DIM,
+        ).pack(anchor="w", pady=(2, 0))
 
-        # Settings ------------------------------------------------------------
-        settings = ctk.CTkFrame(self)
-        settings.grid(row=1, column=0, sticky="ew", padx=20, pady=(12, 6))
-        settings.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(settings, text="DeepSeek API Key", anchor="w").grid(
-            row=0, column=0, padx=(14, 8), pady=(14, 6), sticky="w"
+        # Configuration card -------------------------------------------------
+        card = ctk.CTkFrame(
+            self, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.BORDER
         )
-        self.api_key_entry = ctk.CTkEntry(
-            settings, placeholder_text="sk-... (only needed for live API mode)", show="*"
-        )
-        self.api_key_entry.grid(row=0, column=1, padx=8, pady=(14, 6), sticky="ew")
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(14, 10))
+        card.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            card, text="Configuration", font=_ui_font(13, "bold"), text_color=T.TEXT
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(12, 6))
 
+        self.api_key_entry = self._form_row(
+            card, 1, "DeepSeek API key", placeholder="sk-..."
+        )
         self.show_key_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            settings,
+            card,
             text="Show",
             variable=self.show_key_var,
             command=self._toggle_key_visibility,
-            width=80,
-        ).grid(row=0, column=2, padx=(8, 14), pady=(14, 6))
+            width=70,
+            font=_ui_font(12),
+            fg_color=T.ACCENT,
+            hover_color=T.ACCENT_HOVER,
+            border_color=T.BORDER,
+            text_color=T.TEXT_DIM,
+            checkbox_width=18,
+            checkbox_height=18,
+            corner_radius=5,
+        ).grid(row=1, column=2, padx=(0, 18), pady=(0, 8), sticky="w")
 
-        self.use_api_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            settings,
-            text="Use DeepSeek API for live generation (otherwise: built-in templates)",
-            variable=self.use_api_var,
-            command=self._on_mode_toggle,
-        ).grid(row=1, column=0, columnspan=3, padx=(14, 14), pady=(0, 8), sticky="w")
-
-        self.doc_entry = self._path_row(
-            settings,
+        self.doc_entry = self._form_row(
+            card,
             2,
-            "Architecture Documentation",
-            str(BASE_DIR / arch_parser.DOC_FILE_NAME),
-            self._pick_documentation,
+            "Documentation",
+            initial=str(BASE_DIR / arch_parser.DOC_FILE_NAME),
+            browse_command=self._pick_documentation,
         )
-        self.view_entry = self._path_row(
-            settings,
+        self.view_entry = self._form_row(
+            card,
             3,
-            "Architecture Views",
-            str(BASE_DIR / arch_parser.VIEW_FILE_NAME),
-            self._pick_view,
+            "Architecture views",
+            initial=str(BASE_DIR / arch_parser.VIEW_FILE_NAME),
+            browse_command=self._pick_view,
         )
-        self.out_entry = self._path_row(
-            settings,
+        self.out_entry = self._form_row(
+            card,
             4,
-            "Target Output Directory",
-            str(BASE_DIR / "output"),
-            self._pick_output_dir,
-            bottom_pady=(14, 14),
+            "Output folder",
+            initial=str(BASE_DIR / "output"),
+            browse_command=self._pick_output_dir,
+            bottom_pady=(0, 14),
         )
 
-        # Actions ---------------------------------------------------------------
+        # Actions --------------------------------------------------------------
         actions = ctk.CTkFrame(self, fg_color="transparent")
-        actions.grid(row=2, column=0, sticky="ew", padx=20, pady=(6, 6))
+        actions.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
         actions.grid_columnconfigure(2, weight=1)
 
         self.generate_button = ctk.CTkButton(
             actions,
             text=GENERATE_LABEL,
             height=46,
-            width=250,
+            width=240,
             corner_radius=10,
-            font=ctk.CTkFont(size=16, weight="bold"),
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
+            font=_ui_font(14, "bold"),
+            fg_color=T.ACCENT,
+            hover_color=T.ACCENT_HOVER,
             text_color="#FFFFFF",
             command=self._on_generate,
         )
-        self.generate_button.grid(row=0, column=0, padx=(0, 12), pady=4)
+        self.generate_button.grid(row=0, column=0, padx=(0, 10))
 
         self.clear_button = ctk.CTkButton(
             actions,
-            text="Clear Log",
-            width=100,
+            text="Clear log",
+            width=96,
             height=46,
+            corner_radius=10,
+            font=_ui_font(12),
             fg_color="transparent",
+            hover_color=T.HOVER,
             border_width=1,
+            border_color=T.BORDER,
+            text_color=T.TEXT_DIM,
             command=self._clear_log,
         )
-        self.clear_button.grid(row=0, column=1, padx=(0, 12), pady=4)
+        self.clear_button.grid(row=0, column=1, padx=(0, 18))
 
-        self.progress = ctk.CTkProgressBar(actions, height=14)
-        self.progress.grid(row=0, column=2, sticky="ew", padx=(12, 0), pady=4)
+        self.progress = ctk.CTkProgressBar(
+            actions,
+            height=8,
+            corner_radius=4,
+            fg_color=T.SURFACE_2,
+            progress_color=T.ACCENT,
+        )
+        self.progress.grid(row=0, column=2, sticky="ew")
         self.progress.set(0.0)
 
-        # Log panel -------------------------------------------------------------
-        log_frame = ctk.CTkFrame(self)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=20, pady=(6, 4))
-        log_frame.grid_columnconfigure(0, weight=1)
-        log_frame.grid_rowconfigure(1, weight=1)
+        # Log panel --------------------------------------------------------------
+        log_card = ctk.CTkFrame(
+            self, fg_color=T.SURFACE, corner_radius=14, border_width=1, border_color=T.BORDER
+        )
+        log_card.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        log_card.grid_columnconfigure(0, weight=1)
+        log_card.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            log_frame,
-            text="Execution Log",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+            log_card, text="Execution Log", font=_ui_font(13, "bold"), text_color=T.TEXT
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(12, 0))
 
         self.log_box = ctk.CTkTextbox(
-            log_frame,
+            log_card,
             wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=12),
+            font=ctk.CTkFont(family=self._mono_family, size=12),
+            fg_color=T.LOG_BG,
+            text_color=T.LOG_TEXT,
+            corner_radius=10,
+            border_width=1,
+            border_color=T.BORDER,
         )
-        self.log_box.grid(row=1, column=0, sticky="nsew", padx=12, pady=(8, 12))
+        self.log_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(8, 16))
         self.log_box.configure(state="disabled")
 
-        # Status bar ------------------------------------------------------------
-        self.status_label = ctk.CTkLabel(
-            self,
-            text="Idle. Configure the inputs and click Generate Project Code.",
-            anchor="w",
-            text_color=("gray35", "gray60"),
-        )
-        self.status_label.grid(row=4, column=0, sticky="w", padx=22, pady=(0, 12))
+        # colored log tags (best effort - private widget access, guarded)
+        self._text_widget = None
+        try:
+            self._text_widget = self.log_box._textbox  # noqa: SLF001
+            self._text_widget.tag_configure("dim", foreground=T.TEXT_FAINT)
+            self._text_widget.tag_configure("success", foreground=T.SUCCESS)
+            self._text_widget.tag_configure("error", foreground=T.ERROR)
+        except Exception:
+            self._text_widget = None
 
-    def _path_row(
+        # Status bar ---------------------------------------------------------
+        status_row = ctk.CTkFrame(self, fg_color="transparent")
+        status_row.grid(row=4, column=0, sticky="w", padx=26, pady=(0, 12))
+        self.status_dot = ctk.CTkFrame(
+            status_row, width=10, height=10, corner_radius=5, fg_color=T.TEXT_FAINT
+        )
+        self.status_dot.pack(side="left", padx=(0, 8))
+        self.status_label = ctk.CTkLabel(
+            status_row, text="Ready", font=_ui_font(12), text_color=T.TEXT_DIM
+        )
+        self.status_label.pack(side="left")
+
+    def _form_row(
         self,
         parent: ctk.CTkFrame,
         row: int,
         label_text: str,
-        initial: str,
-        browse_command,
-        bottom_pady=(6, 6),
+        initial: str = "",
+        browse_command=None,
+        placeholder: str = "",
+        bottom_pady=(0, 6),
     ) -> ctk.CTkEntry:
-        ctk.CTkLabel(parent, text=label_text, anchor="w").grid(
-            row=row, column=0, padx=(14, 8), pady=bottom_pady, sticky="w"
+        ctk.CTkLabel(
+            parent,
+            text=label_text,
+            font=_ui_font(12),
+            text_color=T.TEXT_DIM,
+            anchor="w",
+            width=150,
+        ).grid(row=row, column=0, padx=(18, 10), pady=bottom_pady, sticky="w")
+
+        entry = ctk.CTkEntry(
+            parent,
+            height=38,
+            corner_radius=8,
+            fg_color=T.SURFACE_2,
+            border_color=T.BORDER,
+            border_width=1,
+            text_color=T.TEXT,
+            placeholder_text_color=T.TEXT_FAINT,
+            font=_ui_font(12),
         )
-        entry = ctk.CTkEntry(parent)
-        entry.insert(0, initial)
-        entry.grid(row=row, column=1, padx=8, pady=bottom_pady, sticky="ew")
-        ctk.CTkButton(
-            parent, text="Browse...", width=92, command=browse_command
-        ).grid(row=row, column=2, padx=(8, 14), pady=bottom_pady)
+        if initial:
+            entry.insert(0, initial)
+        if placeholder:
+            entry.configure(placeholder_text=placeholder)
+        entry.grid(row=row, column=1, padx=(0, 10), pady=bottom_pady, sticky="ew")
+
+        if browse_command is not None:
+            ctk.CTkButton(
+                parent,
+                text="Browse...",
+                width=92,
+                height=38,
+                corner_radius=8,
+                font=_ui_font(12),
+                fg_color="transparent",
+                hover_color=T.HOVER,
+                border_width=1,
+                border_color=T.BORDER,
+                text_color=T.TEXT,
+                command=browse_command,
+            ).grid(row=row, column=2, padx=(0, 18), pady=bottom_pady)
         return entry
 
     # -------------------------------------------------------------- actions --
 
+    def _set_status(self, text: str, color: Optional[str] = None) -> None:
+        self.status_label.configure(text=text)
+        if color:
+            self.status_dot.configure(fg_color=color)
+
     def _toggle_key_visibility(self) -> None:
         self.api_key_entry.configure(show="" if self.show_key_var.get() else "*")
-
-    def _on_mode_toggle(self) -> None:
-        if self.use_api_var.get():
-            self.status_label.configure(
-                text="Mode: DeepSeek API live generation (API key required)."
-            )
-        else:
-            self.status_label.configure(
-                text="Mode: built-in template generation (no API key needed)."
-            )
 
     def _pick_documentation(self) -> None:
         path = filedialog.askopenfilename(
@@ -320,13 +418,19 @@ class CodeAgentApp(ctk.CTk):
 
     # --------------------------------------------------------------- logging --
 
-    def _append_log(self, text: str) -> None:
+    def _append_log(self, text: str, tag: Optional[str] = None) -> None:
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", text + "\n")
         try:
-            self.log_box.see("end")
-        except AttributeError:  # pragma: no cover - fallback for older customtkinter
-            self.log_box._textbox.see("end")  # noqa: SLF001
+            if tag and self._text_widget is not None:
+                self._text_widget.insert("end", text + "\n", tag)
+            else:
+                self.log_box.insert("end", text + "\n")
+            try:
+                self.log_box.see("end")
+            except AttributeError:  # pragma: no cover - older customtkinter
+                self.log_box._textbox.see("end")  # noqa: SLF001
+        except Exception:
+            pass
         self.log_box.configure(state="disabled")
 
     def _clear_log(self) -> None:
@@ -334,24 +438,32 @@ class CodeAgentApp(ctk.CTk):
         self.log_box.delete("1.0", "end")
         self.log_box.configure(state="disabled")
 
+    @staticmethod
+    def _tag_for(line: str) -> Optional[str]:
+        text = line.strip()
+        if "SUCCESS" in text:
+            return "success"
+        if text.startswith("Traceback") or "ERROR" in text or "failed" in text.lower():
+            return "error"
+        if text.startswith("[gui]"):
+            return "dim"
+        return None
+
     # ------------------------------------------------------------ generation --
 
     def _on_generate(self) -> None:
         if self._running:
             return
 
-        use_api = bool(self.use_api_var.get())
         api_key = self.api_key_entry.get().strip()
         doc_path = Path(self.doc_entry.get().strip())
         view_path = Path(self.view_entry.get().strip())
         out_value = self.out_entry.get().strip()
 
-        if use_api and not api_key:
+        if not api_key:
             messagebox.showwarning(
                 "Missing API key",
-                "Live API generation needs a DeepSeek API key.\n\n"
-                'Enter one, or uncheck "Use DeepSeek API" to generate with '
-                "the built-in templates.",
+                "Please enter your DeepSeek API key first.",
                 parent=self,
             )
             return
@@ -392,35 +504,29 @@ class CodeAgentApp(ctk.CTk):
         self._stage_count = 0
         self._parse_done = False
         self._current_out_dir = str(out_dir)
-        self._total_steps = (1 + len(agent_core.DEFAULT_STAGES)) if use_api else 2
+        self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
         self.progress.set(0.0)
         self.generate_button.configure(state="disabled", text=GENERATE_RUNNING_LABEL)
-        self.status_label.configure(text="Starting...")
+        self._set_status("Starting...", T.ACCENT)
 
         stamp = datetime.now().strftime("%H:%M:%S")
-        self._append_log("-" * 64)
-        self._append_log(f"[gui] Run started at {stamp}")
-        self._append_log(f"[gui] Mode          : {'DeepSeek API live generation' if use_api else 'Built-in template generator'}")
-        self._append_log(f"[gui] Documentation : {doc_path}")
-        self._append_log(f"[gui] Architecture  : {view_path}")
-        self._append_log(f"[gui] Output folder : {out_dir}")
+        self._append_log("-" * 60, tag="dim")
+        self._append_log(f"[gui] Run started at {stamp}", tag="dim")
+        self._append_log(f"[gui] Documentation : {doc_path}", tag="dim")
+        self._append_log(f"[gui] Architecture  : {view_path}", tag="dim")
+        self._append_log(f"[gui] Output folder : {out_dir}", tag="dim")
 
         self._worker = threading.Thread(
             target=self._worker_run,
-            args=(doc_path, view_path, out_dir, api_key, use_api),
+            args=(doc_path, view_path, out_dir, api_key),
             daemon=True,
         )
         self._worker.start()
 
     def _worker_run(
-        self,
-        doc_path: Path,
-        view_path: Path,
-        out_dir: Path,
-        api_key: str,
-        use_api: bool,
+        self, doc_path: Path, view_path: Path, out_dir: Path, api_key: str
     ) -> None:
-        """Background worker: parse documents, then run the generation."""
+        """Background worker: parse documents, then run the DeepSeek generation."""
         q = self._queue
         try:
             q.put(("status", "Parsing architecture documents..."))
@@ -440,20 +546,12 @@ class CodeAgentApp(ctk.CTk):
             )
             q.put(("parsed", True))
 
-            q.put(("status", MODE_API_TEXT if use_api else MODE_BUILTIN_TEXT))
-            q.put(
-                (
-                    "log",
-                    "[gui] Generating project files with the DeepSeek API..."
-                    if use_api
-                    else "[gui] Generating project files with the built-in template generator...",
-                )
-            )
+            q.put(("status", "Generating project files with DeepSeek..."))
+            q.put(("log", "[gui] Generating project files with the DeepSeek API..."))
             summary = agent_core.generate_project(
                 payload,
                 out_dir,
                 api_key=api_key,
-                use_api=use_api,
                 log=lambda message: q.put(("log", str(message))),
             )
             q.put(("done", summary))
@@ -468,12 +566,13 @@ class CodeAgentApp(ctk.CTk):
             while True:
                 kind, payload = self._queue.get_nowait()
                 if kind == "log":
-                    self._append_log(str(payload))
-                    self._track_progress(str(payload))
+                    text = str(payload)
+                    self._append_log(text, tag=self._tag_for(text))
+                    self._track_progress(text)
                 elif kind == "progress":
                     self.progress.set(float(payload))
                 elif kind == "status":
-                    self.status_label.configure(text=str(payload))
+                    self._set_status(str(payload), T.ACCENT)
                 elif kind == "parsed":
                     self._parse_done = True
                     self._update_stage_progress()
@@ -485,40 +584,21 @@ class CodeAgentApp(ctk.CTk):
                         out_dir_str = payload.get("output_dir") or str(
                             getattr(self, "_current_out_dir", "")
                         )
-                        used_fallback = bool(payload.get("used_fallback"))
                     else:
                         files = [str(p) for p in (payload or [])]
                         out_dir_str = str(getattr(self, "_current_out_dir", ""))
-                        used_fallback = False
-                    if used_fallback:
-                        self.status_label.configure(
-                            text="Completed with fallback files."
-                        )
-                        messagebox.showwarning(
-                            "Generation finished with fallback files",
-                            f"DeepSeek API was unavailable, so {len(files)} fallback "
-                            f"sample file(s) were written into:\n{out_dir_str}\n\n"
-                            "Check the log for the exact API error and retry with a "
-                            "valid key / network connection.",
-                            parent=self,
-                        )
-                    else:
-                        self.status_label.configure(text="Completed successfully.")
-                        messagebox.showinfo(
-                            "Generation complete",
-                            f"Generated {len(files)} file(s) into:\n{out_dir_str}",
-                            parent=self,
-                        )
+                    self._set_status(
+                        f"Completed. {len(files)} file(s) generated.", T.SUCCESS
+                    )
+                    messagebox.showinfo(
+                        "Generation complete",
+                        f"Generated {len(files)} file(s) into:\n{out_dir_str}",
+                        parent=self,
+                    )
                 elif kind == "error":
                     self._finish_run()
-                    self.status_label.configure(text="Failed.")
-                    message = str(payload)
-                    if "stage '" in message:
-                        message += (
-                            '\n\nTip: uncheck "Use DeepSeek API" to generate '
-                            "with the built-in templates instead."
-                        )
-                    messagebox.showerror("Generation failed", message, parent=self)
+                    self._set_status("Failed. Check the log for details.", T.ERROR)
+                    messagebox.showerror("Generation failed", str(payload), parent=self)
         except queue.Empty:
             pass
         self.after(80, self._drain_queue)
@@ -527,8 +607,8 @@ class CodeAgentApp(ctk.CTk):
         if ": requesting" in line:
             match = re.search(r"stage '([^']+)'", line)
             if match:
-                self.status_label.configure(
-                    text=f"DeepSeek is generating: stage '{match.group(1)}'..."
+                self._set_status(
+                    f"DeepSeek is generating: stage '{match.group(1)}'...", T.ACCENT
                 )
         if "wrote" in line and "file(s)" in line:
             self._stage_count += 1
