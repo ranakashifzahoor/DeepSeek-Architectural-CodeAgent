@@ -1,0 +1,30 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---- PyInstaller build artifacts ----
+build/
+dist/
+*.spec
+
+# ---- Secrets / environment ----
+.env
+.env.local
+!.env.example
+
+# ---- Generated output & temporary data ----
+output/
+architecture_payload.json
+
+# ---- Logs ----
+*.log
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
