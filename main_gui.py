@@ -156,6 +156,9 @@ class CodeAgentApp(ctk.CTk):
         self._parse_done = False
         self._total_steps = 1 + len(agent_core.DEFAULT_STAGES)
         self._current_out_dir = ""
+        self._doc_path = BASE_DIR / arch_parser.DOC_FILE_NAME
+        self._view_path = BASE_DIR / arch_parser.VIEW_FILE_NAME
+        self._out_path = BASE_DIR / "output"
 
         self._build_ui()
         self.after(80, self._drain_queue)
@@ -246,21 +249,21 @@ class CodeAgentApp(ctk.CTk):
             card,
             2,
             "Documentation",
-            initial=str(BASE_DIR / arch_parser.DOC_FILE_NAME),
+            placeholder="Architecture_Documentation.md",
             browse_command=self._pick_documentation,
         )
         self.view_entry = self._form_row(
             card,
             3,
             "Architecture views",
-            initial=str(BASE_DIR / arch_parser.VIEW_FILE_NAME),
+            placeholder="Architecture_View.md",
             browse_command=self._pick_view,
         )
         self.out_entry = self._form_row(
             card,
             4,
             "Output folder",
-            initial=str(BASE_DIR / "output"),
+            placeholder="Output Destination",
             browse_command=self._pick_output_dir,
             bottom_pady=(0, 14),
         )
@@ -466,6 +469,7 @@ class CodeAgentApp(ctk.CTk):
             filetypes=[("Markdown files", "*.md"), ("All files", "*.*")],
         )
         if path:
+            self._doc_path = Path(path)
             self._set_entry(self.doc_entry, path)
 
     def _pick_view(self) -> None:
@@ -477,14 +481,16 @@ class CodeAgentApp(ctk.CTk):
             filetypes=[("Markdown files", "*.md"), ("All files", "*.*")],
         )
         if path:
+            self._view_path = Path(path)
             self._set_entry(self.view_entry, path)
 
     def _pick_output_dir(self) -> None:
-        initial = self.out_entry.get().strip() or str(BASE_DIR)
+        initial = self.out_entry.get().strip() or str(self._out_path)
         path = filedialog.askdirectory(
             parent=self, title="Select target output directory", initialdir=initial
         )
         if path:
+            self._out_path = Path(path)
             self._set_entry(self.out_entry, path)
 
     @staticmethod
@@ -532,9 +538,14 @@ class CodeAgentApp(ctk.CTk):
             return
 
         api_key = self.api_key_entry.get().strip()
-        doc_path = Path(self.doc_entry.get().strip())
-        view_path = Path(self.view_entry.get().strip())
-        out_value = self.out_entry.get().strip()
+        doc_text = self.doc_entry.get().strip()
+        view_text = self.view_entry.get().strip()
+        out_text = self.out_entry.get().strip()
+        doc_path = Path(doc_text) if doc_text else self._doc_path
+        view_path = Path(view_text) if view_text else self._view_path
+        out_value = out_text if out_text else str(self._out_path)
+        self._doc_path = doc_path
+        self._view_path = view_path
 
         if not api_key:
             messagebox.showwarning(
@@ -566,6 +577,7 @@ class CodeAgentApp(ctk.CTk):
             return
 
         out_dir = Path(out_value)
+        self._out_path = out_dir
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:

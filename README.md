@@ -30,7 +30,7 @@ This tool is a simplified **Code Agent** (in the spirit of Claude Code–style a
 **Key features**
 
 - **Document parser** — extracts heading-aware sections and cleans PlantUML diagrams from the two markdown inputs into a structured JSON payload.
-- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes every returned file in a strict, machine-parsable format.
+- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes the core project files (7 files + payload) in a strict, machine-parsable format.
 - **Polished modern UI** — CustomTkinter dashboard with an emerald-and-white theme, masked API key (show/hide toggle), file and folder pickers, colored execution log and staged progress bar.
 - **Background execution** — generation runs in a background thread; the window never freezes.
 - **Safety built in** — path-traversal protection, response-truncation recovery (incomplete API responses are salvaged or completed with fallback files) and automatic retries with backoff.
@@ -49,10 +49,10 @@ Architecture_View.md ──────────┘        (cleaned text + se
                                               │
                                               ▼
                                     agent_core.py  ⇄  DeepSeek API
-                                        stage 1: backend + package.json
-                                        stage 2: SQL schema
-                                        stage 3: OpenAPI + README + .env.example
-                                        stage 4: tests + Dockerfile
+                                        stage 1: package.json + server.js
+                                        stage 2: schema.sql
+                                        stage 3: openapi.yaml + README.md
+                                        stage 4: test.js + Dockerfile
                                               │
                                               ▼
                                      output/  (generated project files)
@@ -63,7 +63,7 @@ Architecture_View.md ──────────┘        (cleaned text + se
 | File | Responsibility | Highlights |
 | --- | --- | --- |
 | `parser.py` | Reads both architecture documents, cleans prose/PlantUML, structures everything into a JSON payload | `build_payload()`, `clean_plantuml()`, `extract_sections()`; fence-aware heading detection; standalone CLI included |
-| `agent_core.py` | DeepSeek API client + staged generation engine; writes every generated file into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, path-traversal guard, truncation detection with automatic recovery |
+| `agent_core.py` | DeepSeek API client + staged generation engine; writes the core project files into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, core-file scope (7 files + payload, no sub-directories), path-traversal guard, truncation recovery |
 | `main_gui.py` | CustomTkinter desktop dashboard (modern emerald-and-white theme); orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven colored log panel, staged progress, success and error popups |
 | `build_exe.py` | One-command PyInstaller build for the standalone executable | `--onefile --windowed`, bundles CustomTkinter assets, `parser`/`agent_core`, Tcl/Tk runtime hooks |
 
@@ -77,7 +77,7 @@ DeepSeek is instructed to answer with one block per file:
 ===END FILE===
 ```
 
-The engine validates the block structure (truncated responses are salvaged by closing open file streams, and the set is completed with fallback files when needed), de-fences any stray markdown, refuses absolute or escaping paths, and writes the files into the chosen output folder. A JSON file-mapping response is also accepted for robustness.
+The engine validates the block structure (truncated responses are salvaged by closing open file streams, and missing core files are completed automatically), de-fences any stray markdown, refuses absolute or escaping paths, and writes the core files into the chosen output folder. Only the core set is kept (package.json, server.js, Dockerfile, schema.sql, openapi.yaml, test.js, README.md): nested paths are flattened to the project root and extra files are skipped and logged, so the output stays at 7-8 files. A JSON file-mapping response is also accepted for robustness.
 
 ### PyInstaller compilation
 
@@ -128,7 +128,7 @@ The executable is created at `dist\DeepSeek_CodeAgent.exe` — copy it anywhere 
 
 1. **Launch the application** — `python main_gui.py` (source) or double-click `dist\DeepSeek_CodeAgent.exe`.
 2. **Enter your DeepSeek API key** — the field is masked; use the **Show** checkbox to reveal it. The key is only kept in memory for the session and is never written to disk.
-3. **Select the Architecture Documentation** — click **Browse…** next to *Architecture Documentation* and choose `Architecture_Documentation.md`.
+3. **Select the Architecture Documentation** — the field shows a short placeholder until you pick a file; click **Browse…** and choose `Architecture_Documentation.md`.
 4. **Select the Architecture Views** — choose `Architecture_View.md` (PlantUML diagrams).
 5. **Choose the target output directory** — any folder; it is created automatically if missing.
 6. **Click Generate Project Code** — watch the live log and the progress bar:
@@ -147,29 +147,21 @@ python parser.py --doc Architecture_Documentation.md --view Architecture_View.md
 
 ## Generated Project Architecture
 
-The agent produces a typical Node.js/Express service layout (exact file names may vary slightly as the code is model-generated; the required deliverables are enforced by the stage prompts):
+The agent is scoped to the essential core file set, so the output stays compact and predictable (no sub-directories):
 
 ```
 output/
 ├── package.json               # npm manifest (start / test scripts, pinned deps)
-├── src/                       # Express backend
-│   ├── server.js              # HTTP entry point
-│   ├── app.js                 # application wiring / middleware
-│   ├── routes/                # API route definitions
-│   ├── controllers/           # request handlers
-│   └── services/              # business logic + data access
-├── sql/
-│   └── schema.sql             # SQL DDL — tables, keys, constraints, indexes
-├── openapi.yaml               # OpenAPI 3.0 specification for every endpoint
-├── tests/                     # automated test suite (Jest + Supertest)
+├── server.js                  # single-file Express backend (HTTP entry point)
 ├── Dockerfile                 # container image for the backend
-├── .dockerignore
-├── .env.example               # configuration template
+├── schema.sql                 # SQL DDL: tables, keys, constraints
+├── openapi.yaml               # OpenAPI 3.0 specification for every endpoint
+├── test.js                    # automated test suite (Jest + Supertest)
 ├── README.md                  # README for the generated project
 └── architecture_payload.json  # parsed architecture input (traceability)
 ```
 
-**Note:** the SQL schema matches the documented data model; Express routes, OpenAPI paths and the tests are generated consistently with each other.
+**Note:** the SQL schema matches the documented data model; Express routes, OpenAPI paths and the tests are generated consistently with each other. The file count stays at 7-8 files (core set + payload copy).
 
 ---
 
@@ -213,7 +205,7 @@ CodeAgent_DeepSeek/
 | --- | --- |
 | Model name (`deepseek-chat`), timeout, retries | `agent_core.py` — `DEFAULT_MODEL`, `DEFAULT_TIMEOUT`, `DEFAULT_MAX_RETRIES` |
 | Generation stages / prompts | `agent_core.py` — `DEFAULT_STAGES`, `build_system_prompt()` |
-| GUI title, accent color, window size | `main_gui.py` — `APP_TITLE`, `ACCENT`, `geometry()` |
+| GUI title, theme colors, window size | `main_gui.py` — `APP_TITLE`, design tokens in class `T`, `geometry()` |
 | PyInstaller flags / executable name | `build_exe.py` |
 | Ignored files & folders | `.gitignore` |
 
