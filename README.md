@@ -30,7 +30,7 @@ This tool is a simplified **Code Agent** (in the spirit of Claude Code–style a
 **Key features**
 
 - **Document parser** — extracts heading-aware sections and cleans PlantUML diagrams from the two markdown inputs into a structured JSON payload.
-- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes the core project files (7 files + payload) in a strict, machine-parsable format.
+- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in five focused stages and writes the full-stack core files (Express backend + interactive game UI, 8 files + payload) in a strict, machine-parsable format.
 - **Polished modern UI** — CustomTkinter dashboard with an emerald-and-white theme, masked API key (show/hide toggle), file and folder pickers, colored execution log and staged progress bar.
 - **Background execution** — generation runs in a background thread; the window never freezes.
 - **Safety built in** — path-traversal protection, response-truncation recovery (incomplete API responses are salvaged or completed with fallback files) and automatic retries with backoff.
@@ -50,9 +50,10 @@ Architecture_View.md ──────────┘        (cleaned text + se
                                               ▼
                                     agent_core.py  ⇄  DeepSeek API
                                         stage 1: package.json + server.js
-                                        stage 2: schema.sql
-                                        stage 3: openapi.yaml + README.md
-                                        stage 4: test.js + Dockerfile
+                                        stage 2: public/index.html (game UI)
+                                        stage 3: schema.sql
+                                        stage 4: openapi.yaml + README.md
+                                        stage 5: test.js + Dockerfile
                                               │
                                               ▼
                                      output/  (generated project files)
@@ -63,7 +64,7 @@ Architecture_View.md ──────────┘        (cleaned text + se
 | File | Responsibility | Highlights |
 | --- | --- | --- |
 | `parser.py` | Reads both architecture documents, cleans prose/PlantUML, structures everything into a JSON payload | `build_payload()`, `clean_plantuml()`, `extract_sections()`; fence-aware heading detection; standalone CLI included |
-| `agent_core.py` | DeepSeek API client + staged generation engine; writes the core project files into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, core-file scope (7 files + payload, no sub-directories), path-traversal guard, truncation recovery |
+| `agent_core.py` | DeepSeek API client + staged generation engine; writes the full-stack core project files (Express backend + interactive game UI) into the output directory | `DeepSeekClient` (retries, backoff), 5-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, core-file scope (8 files + payload; game UI in public/), path-traversal guard, truncation recovery with high-quality fallback |
 | `main_gui.py` | CustomTkinter desktop dashboard (modern emerald-and-white theme); orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven colored log panel, staged progress, success and error popups |
 | `build_exe.py` | One-command PyInstaller build for the standalone executable | `--onefile --windowed`, bundles CustomTkinter assets, `parser`/`agent_core`, Tcl/Tk runtime hooks |
 
@@ -77,7 +78,7 @@ DeepSeek is instructed to answer with one block per file:
 ===END FILE===
 ```
 
-The engine validates the block structure (truncated responses are salvaged by closing open file streams, and missing core files are completed automatically), de-fences any stray markdown, refuses absolute or escaping paths, and writes the core files into the chosen output folder. Only the core set is kept (package.json, server.js, Dockerfile, schema.sql, openapi.yaml, test.js, README.md): nested paths are flattened to the project root and extra files are skipped and logged, so the output stays at 7-8 files. A JSON file-mapping response is also accepted for robustness.
+The engine validates the block structure (truncated responses are salvaged by closing open file streams, and missing core files are completed automatically), de-fences any stray markdown, refuses absolute or escaping paths, and writes the core files into the chosen output folder. Only the core set is kept (package.json, server.js, public/index.html, Dockerfile, schema.sql, openapi.yaml, test.js, README.md): nested paths are flattened to their core names (index.html to public/index.html) and extra files are skipped and logged, so the output stays at 8-9 files. A JSON file-mapping response is also accepted for robustness.
 
 ### PyInstaller compilation
 
@@ -134,7 +135,7 @@ The executable is created at `dist\DeepSeek_CodeAgent.exe` — copy it anywhere 
 6. **Click Generate Project Code** — watch the live log and the progress bar:
    - *Parsing* — both documents are cleaned and structured into a JSON payload;
    - *Stages* — DeepSeek generates the backend, SQL schema, documentation and tests in four API calls.
-7. **Review the results** — when the success popup appears, your output folder contains the complete generated project. Failures show an error popup with the exact reason.
+7. **Review the results** — when the success popup appears, your output folder contains the complete generated project. Run it with `npm install` + `npm start`, then open http://localhost:3000 to play the Space Fractions game. Failures show an error popup with the exact reason.
 
 **Batch/CLI usage (optional)**
 
@@ -147,12 +148,14 @@ python parser.py --doc Architecture_Documentation.md --view Architecture_View.md
 
 ## Generated Project Architecture
 
-The agent is scoped to the essential core file set, so the output stays compact and predictable (no sub-directories):
+The agent is scoped to the essential core file set, so the output stays compact and predictable:
 
 ```
 output/
 ├── package.json               # npm manifest (start / test scripts, pinned deps)
-├── server.js                  # single-file Express backend (HTTP entry point)
+├── server.js                  # single-file Express backend (serves public/ + REST API)
+├── public/
+│   └── index.html             # interactive game UI (inline CSS + JS)
 ├── Dockerfile                 # container image for the backend
 ├── schema.sql                 # SQL DDL: tables, keys, constraints
 ├── openapi.yaml               # OpenAPI 3.0 specification for every endpoint
@@ -161,7 +164,7 @@ output/
 └── architecture_payload.json  # parsed architecture input (traceability)
 ```
 
-**Note:** the SQL schema matches the documented data model; Express routes, OpenAPI paths and the tests are generated consistently with each other. The file count stays at 7-8 files (core set + payload copy).
+**Note:** the SQL schema matches the documented data model; the game page, Express routes, OpenAPI paths and the tests are generated consistently with each other. The file count stays at 8-9 files (core set + payload copy). Run the generated project with `npm install` + `npm start` and open http://localhost:3000 to play; answers like `0.75` and `3/4` are both accepted.
 
 ---
 
