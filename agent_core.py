@@ -108,12 +108,14 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
             "single-file Express app in the project root that serves the "
             "static game UI from the public directory (express.static) and "
             "implements: GET /api/v1/game/fractions/level (dynamic: on EVERY "
-            "call it picks a random fraction from a pool of at least seven "
-            "entries - for example 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10 - "
-            "computes the decimal dynamically from numerator / denominator "
-            "at request time, never returns the same fraction twice in a "
-            "row, increments and returns the level number, and never "
-            "hardcodes a single static fraction) and POST "
+            "call it picks a random fraction from a pool of at least eight "
+            "entries - for example 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, "
+            "9/10 - computes expectedDecimal from numerator / denominator "
+            "at request time, responds as { \"status\": \"success\", "
+            "\"level\": <incrementing number>, \"fraction\": \"3/4\", "
+            "\"expectedDecimal\": 0.75 }, never returns the same fraction "
+            "twice in a row, and never hardcodes a single static fraction) "
+            "and POST "
             "/api/v1/game/fractions/validate (trims the answer, accepts "
             "decimal strings like \"0.75\" and fraction strings like "
             "\"3/4\" by parsing numerator/denominator, and compares "
@@ -132,17 +134,21 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
             "Generate public/index.html: a complete, self-contained "
             "interactive Space Fractions game UI with inline CSS and inline "
             "JavaScript (no external libraries or asset files). It must "
-            "fetch /api/v1/game/fractions/level on load, send "
+            "fetch /api/v1/game/fractions/level on initial page load AND "
+            "every time the next-challenge button is clicked, parse the "
+            "JSON response, and immediately update the fraction display "
+            "(id=\"current-fraction\") plus the LEVEL counter from the "
+            "response so no placeholder (such as --) is ever left showing. "
+            "The Submit/Check button must have a click handler that POSTs "
             "{ \"answer\": <text>, \"fraction\": <current fraction> } to "
-            "/api/v1/game/fractions/validate, show immediate "
-            "correct/incorrect feedback (including the expected decimal "
-            "when wrong), and keep a running score plus a level indicator "
-            "updated from the level endpoint response. The next-challenge "
-            "action must re-fetch /api/v1/game/fractions/level, render the "
-            "brand-new fraction and progress bar, clear the previous answer "
-            "input and feedback, and keep score tracking seamless; if the "
-            "API is unreachable show a graceful message. Clean, "
-            "space-themed, responsive design with no syntax errors."
+            "/api/v1/game/fractions/validate and then updates Score, "
+            "Streak (consecutive correct answers, reset on a wrong answer) "
+            "and a status message (showing the expected decimal when "
+            "wrong). After every fetch, clear the answer input and ensure "
+            "both buttons are enabled; treat fetch failures gracefully "
+            "(message plus a working retry via the next-challenge button) "
+            "so the page can never get stuck. Clean, space-themed, "
+            "responsive design with no syntax errors."
         ),
     },
     {
@@ -239,6 +245,7 @@ _STATIC_FILES: Dict[str, str] = {
         "    { fraction: '1/4', numerator: 1, denominator: 4 },\n"
         "    { fraction: '4/5', numerator: 4, denominator: 5 },\n"
         "    { fraction: '3/10', numerator: 3, denominator: 10 },\n"
+        "    { fraction: '9/10', numerator: 9, denominator: 10 },\n"
         "];\n"
         "let lastChallengeIndex = -1;\n"
         "let levelCounter = 0;\n\n"
@@ -271,8 +278,8 @@ _STATIC_FILES: Dict[str, str] = {
         "    lastChallengeIndex = index;\n"
         "    const challenge = CHALLENGES[index];\n"
         "    const value = challenge.numerator / challenge.denominator;\n"
-        "    const decimal = String(Math.round(value * 1000) / 1000);\n"
-        "    res.json({ level: levelCounter, fraction: challenge.fraction, targets: [decimal] });\n"
+        "    const expectedDecimal = Math.round(value * 1000) / 1000;\n"
+        "    res.json({ status: 'success', level: levelCounter, fraction: challenge.fraction, expectedDecimal: expectedDecimal });\n"
         "});\n\n"
         "app.post('/api/v1/game/fractions/validate', (req, res) => {\n"
         "    const body = req.body || {};\n"
@@ -404,9 +411,9 @@ _STATIC_FILES: Dict[str, str] = {
   <section class="panel">
     <div class="panel-head">
       <span class="eyebrow" style="margin: 0;">Current fraction</span>
-      <span class="chips"><span class="chip">LEVEL <span id="level">1</span></span><span class="chip">SCORE <span id="score">0</span></span></span>
+      <span class="chips"><span class="chip">LEVEL <span id="level">1</span></span><span class="chip">SCORE <span id="score">0</span></span><span class="chip">STREAK <span id="streak">0</span></span></span>
     </div>
-    <div class="fraction" id="fraction">...</div>
+    <div class="fraction" id="current-fraction">--</div>
     <div class="bar"><div class="bar-fill" id="bar"></div></div>
     <p class="hint">What decimal value does this fraction equal?</p>
     <div class="row">
@@ -423,16 +430,17 @@ _STATIC_FILES: Dict[str, str] = {
 <script>
 (function () {
   "use strict";
-  var state = { fraction: "3/4", score: 0, level: 1 };
+  var state = { fraction: "", score: 0, streak: 0, level: 1, expectedDecimal: null };
   var el = {
-    fraction: document.getElementById("fraction"),
+    fraction: document.getElementById("current-fraction"),
     bar: document.getElementById("bar"),
     answer: document.getElementById("answer"),
     check: document.getElementById("check"),
     next: document.getElementById("next"),
     feedback: document.getElementById("feedback"),
     score: document.getElementById("score"),
-    level: document.getElementById("level")
+    level: document.getElementById("level"),
+    streak: document.getElementById("streak")
   };
   function setFeedback(message, kind) {
     el.feedback.textContent = message || "";
@@ -443,32 +451,41 @@ _STATIC_FILES: Dict[str, str] = {
     el.check.textContent = busy ? "Checking..." : "Check";
   }
   function renderFraction(fraction) {
-    state.fraction = fraction || "3/4";
-    el.fraction.textContent = state.fraction;
-    var parts = state.fraction.split("/");
-    var ratio = parts.length === 2 ? Number(parts[0]) / Number(parts[1]) : 0.5;
-    if (isFinite(ratio)) {
-      el.bar.style.width = Math.max(4, Math.min(100, ratio * 100)) + "%";
-    }
+    state.fraction = fraction;
+    el.fraction.textContent = fraction;
+    var parts = fraction.split("/");
+    var ratio = parts.length === 2 ? Number(parts[0]) / Number(parts[1]) : 0;
+    el.bar.style.width = isFinite(ratio) && ratio > 0 ? Math.max(4, Math.min(100, ratio * 100)) + "%" : "0%";
   }
   function loadLevel() {
-    setFeedback("", "");
-    el.answer.value = "";
-    el.answer.focus();
+    setFeedback("Loading new challenge...", "");
+    el.next.disabled = true;
     fetch("/api/v1/game/fractions/level")
       .then(function (response) {
         if (!response.ok) { throw new Error("HTTP " + response.status); }
         return response.json();
       })
       .then(function (data) {
-        renderFraction(data.fraction);
+        var fraction = data && typeof data.fraction === "string" ? data.fraction.trim() : "";
+        if (!fraction) { throw new Error("Missing fraction in response"); }
+        renderFraction(fraction);
         if (typeof data.level === "number" && isFinite(data.level)) {
           state.level = data.level;
           el.level.textContent = String(data.level);
         }
+        state.expectedDecimal = typeof data.expectedDecimal === "number" && isFinite(data.expectedDecimal)
+          ? data.expectedDecimal
+          : null;
+        el.answer.value = "";
+        el.answer.focus();
+        el.check.disabled = false;
+        el.next.disabled = false;
+        setFeedback("", "");
       })
       .catch(function () {
-        setFeedback("Could not reach the game API. Is the server running?", "bad");
+        el.check.disabled = false;
+        el.next.disabled = false;
+        setFeedback("Could not reach the game API. Press Next challenge to retry.", "bad");
       });
   }
   function checkAnswer() {
@@ -493,11 +510,16 @@ _STATIC_FILES: Dict[str, str] = {
         setBusy(false);
         if (data.correct) {
           state.score += typeof data.score === "number" ? data.score : 100;
+          state.streak += 1;
           el.score.textContent = String(state.score);
-          setFeedback("Correct. Well done.", "ok");
+          el.streak.textContent = String(state.streak);
+          setFeedback("Correct. Streak: " + state.streak + ".", "ok");
         } else {
+          state.streak = 0;
+          el.streak.textContent = "0";
+          var shown = data.expected || (state.expectedDecimal === null ? "" : String(state.expectedDecimal));
           setFeedback(
-            data.expected ? "Not quite. The answer is " + data.expected + "." : "Not quite. Try again.",
+            shown ? "Not quite. The answer is " + shown + "." : "Not quite. Try again.",
             "bad"
           );
         }
@@ -840,10 +862,11 @@ Generate all of the following across the requested stages:
 - The game page sends {{ "answer": <text>, "fraction": <current challenge> }}
   so the server can validate against the exact challenge in play.
 - GET /api/v1/game/fractions/level must be dynamic: every call returns a
-  brand-new randomly selected challenge from a pool of at least seven
-  fractions (e.g. 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10) with the decimal
-  computed at request time, the level number incremented, and no immediate
-  repeats (e.g. {{ "level": 3, "fraction": "5/8", "targets": ["0.625"] }}).
+  brand-new randomly selected challenge from a pool of at least eight
+  fractions (e.g. 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, 9/10) with
+  expectedDecimal computed at request time, the level number incremented,
+  and no immediate repeats. Response shape:
+  {{ "status": "success", "level": 3, "fraction": "5/8", "expectedDecimal": 0.625 }}.
 
 ## Output format (STRICT)
 - Emit every file as a block in exactly this shape:
@@ -866,12 +889,15 @@ Generate all of the following across the requested stages:
   the OpenAPI spec and the tests must all match; the Dockerfile must run
   the server on port 3000.
 - The game page must be complete and self-contained (inline CSS and
-  JavaScript; no external libraries or asset files): it loads a challenge,
-  submits the answer, shows immediate feedback (including the expected
-  decimal when wrong), keeps a running score and a level indicator, and
-  its next-challenge action re-fetches the level endpoint and renders the
-  new fraction while clearing the previous answer input and feedback; it
-  shows a graceful message when the API is unreachable.
+  JavaScript; no external libraries or asset files): it fetches the level
+  on load and on every next-challenge click, immediately fills the
+  fraction display (#current-fraction) from the response (a placeholder
+  like -- must never get stuck), binds Submit/Check to POST the answer and
+  updates Score, Streak (reset on a wrong answer) and the status message
+  (including the expected decimal when wrong), keeps a LEVEL indicator in
+  sync with the API, clears the answer input and re-enables the buttons
+  after each fetch, and shows a graceful message with a working retry when
+  the API is unreachable.
 """
 
 
