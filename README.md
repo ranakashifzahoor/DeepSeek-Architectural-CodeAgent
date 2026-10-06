@@ -2,7 +2,7 @@
 
 A **Windows desktop application** that turns architectural documentation into a complete, runnable codebase using the official **DeepSeek API**.
 
-The agent reads two design documents — `Architecture_Documentation.md` (prose) and `Architecture_View.md` (PlantUML views) — cleans and structures them into a single JSON payload, then generates the full **Space Fractions** project with the **live DeepSeek API**: a standalone Tkinter desktop game (`main_game.py`), `requirements.txt`, SQL schema, OpenAPI 3.0 specification, Dockerfile and README — all written directly into a selectable output folder.
+The agent reads two design documents — `Architecture_Documentation.md` (prose) and `Architecture_View.md` (PlantUML views) — cleans and structures them into a single JSON payload, then generates the full **Space Fractions** project with the **live DeepSeek API**: a standalone PyQt5 desktop game (`main_game.py`) that renders the dark-space web design in a native window, `requirements.txt`, SQL schema, OpenAPI 3.0 specification, Dockerfile and README — all written directly into a selectable output folder.
 
 Built with Python + CustomTkinter and shipped as a single-file executable (`DeepSeek_CodeAgent.exe`) that requires **no Python runtime** on target machines.
 
@@ -30,7 +30,7 @@ This tool is a simplified **Code Agent** (in the spirit of Claude Code–style a
 **Key features**
 
 - **Document parser** — extracts heading-aware sections and cleans PlantUML diagrams from the two markdown inputs into a structured JSON payload.
-- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes the desktop-game core files (Tkinter game + supporting documents, 6 files + payload) in a strict, machine-parsable format.
+- **DeepSeek code generation** — sends the parsed architecture to the official DeepSeek API (`/v1/chat/completions`) in four focused stages and writes the desktop-game core files (PyQt5 + QtWebEngine game + index.html + supporting documents, 7 files + payload) in a strict, machine-parsable format.
 - **Polished modern UI** — CustomTkinter dashboard with an emerald-and-white theme, masked API key (show/hide toggle), file and folder pickers, colored execution log and staged progress bar.
 - **Background execution** — generation runs in a background thread; the window never freezes.
 - **Safety built in** — path-traversal protection, response-truncation recovery (incomplete API responses are salvaged or completed with fallback files) and automatic retries with backoff.
@@ -63,7 +63,7 @@ Architecture_View.md ──────────┘        (cleaned text + se
 | File | Responsibility | Highlights |
 | --- | --- | --- |
 | `parser.py` | Reads both architecture documents, cleans prose/PlantUML, structures everything into a JSON payload | `build_payload()`, `clean_plantuml()`, `extract_sections()`; fence-aware heading detection; standalone CLI included |
-| `agent_core.py` | DeepSeek API client + staged generation engine; writes the desktop-game core project files (Tkinter game + supporting documents) into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, core-file scope (6 files + payload), path-traversal guard, truncation recovery with high-quality fallback |
+| `agent_core.py` | DeepSeek API client + staged generation engine; writes the desktop-game core project files (PyQt5 shell + index.html game page + supporting documents) into the output directory | `DeepSeekClient` (retries, backoff), 4-stage prompting, strict `===FILE: <path>=== … ===END FILE===` protocol, core-file scope (7 files + payload), path-traversal guard, truncation recovery with high-quality fallback |
 | `main_gui.py` | CustomTkinter desktop dashboard (modern emerald-and-white theme); orchestrates parse → generate in a background thread | Masked API-key entry, file/folder pickers, queue-driven colored log panel, staged progress, success and error popups |
 | `build_exe.py` | One-command PyInstaller build for the standalone executable | `--onefile --windowed`, bundles CustomTkinter assets, `parser`/`agent_core`, Tcl/Tk runtime hooks |
 
@@ -77,7 +77,7 @@ DeepSeek is instructed to answer with one block per file:
 ===END FILE===
 ```
 
-The engine validates the block structure (truncated responses are salvaged by closing open file streams, and missing core files are completed automatically), de-fences any stray markdown, refuses absolute or escaping paths, and writes the core files into the chosen output folder. Only the core set is kept (main_game.py, requirements.txt, schema.sql, openapi.yaml, Dockerfile, README.md): nested paths are flattened to their core names (main.py to main_game.py) and extra files are skipped and logged, so the output stays at 6-7 files. A JSON file-mapping response is also accepted for robustness.
+The engine validates the block structure (truncated responses are salvaged by closing open file streams, and missing core files are completed automatically), de-fences any stray markdown, refuses absolute or escaping paths, and writes the core files into the chosen output folder. Only the core set is kept (main_game.py, index.html, requirements.txt, schema.sql, openapi.yaml, Dockerfile, README.md): nested paths are flattened to their core names (main.py to main_game.py, public/index.html to index.html) and extra files are skipped and logged, so the output stays at 7-8 files. A JSON file-mapping response is also accepted for robustness.
 
 ### PyInstaller compilation
 
@@ -134,7 +134,7 @@ The executable is created at `dist\DeepSeek_CodeAgent.exe` — copy it anywhere 
 6. **Click Generate Project Code** — watch the live log and the progress bar:
    - *Parsing* — both documents are cleaned and structured into a JSON payload;
    - *Stages* — DeepSeek generates the desktop game, SQL schema, documentation and container files in four API calls.
-7. **Review the results** — when the success popup appears, your output folder contains the complete generated project. Run the game with `python main_game.py` (no packages to install, tkinter ships with Python). Failures show an error popup with the exact reason.
+7. **Review the results** — when the success popup appears, your output folder contains the complete generated project. Install the game's dependencies once with `python -m pip install -r requirements.txt`, then run `python main_game.py`. Failures show an error popup with the exact reason.
 
 **Batch/CLI usage (optional)**
 
@@ -151,8 +151,9 @@ The agent is scoped to the essential core file set, so the output stays compact 
 
 ```
 output/
-├── main_game.py               # complete Tkinter desktop game (dark space theme)
-├── requirements.txt           # dependency notes (standard library only)
+├── main_game.py               # PyQt5 desktop shell that loads index.html
+├── index.html                 # dark-space game page (HTML/CSS/JS)
+├── requirements.txt           # PyQt5 and PyQtWebEngine only
 ├── schema.sql                 # SQL DDL: tables, keys, constraints
 ├── openapi.yaml               # OpenAPI 3.0 specification of the game operations
 ├── Dockerfile                 # container packaging for the game
@@ -160,7 +161,7 @@ output/
 └── architecture_payload.json  # parsed architecture input (traceability)
 ```
 
-**Note:** the SQL schema matches the documented data model; the game, OpenAPI document and README are generated consistently with each other. The file count stays at 6-7 files (core set + payload copy). Run the generated game with `python main_game.py`: every **Next Challenge** press rolls a fresh random fraction with its decimal computed on the spot, and answers like `0.75` and `3/4` are both accepted.
+**Note:** the SQL schema matches the documented data model; the game, OpenAPI document and README are generated consistently with each other. The file count stays at 7-8 files (core set + payload copy). Run the generated game with `python -m pip install -r requirements.txt` followed by `python main_game.py`: every **Next Challenge** press rolls a fresh random fraction with its decimal computed on the spot, and answers like `0.75` and `3/4` are both accepted.
 
 ---
 

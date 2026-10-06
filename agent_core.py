@@ -7,18 +7,19 @@ generate the complete, production-ready "Space Fractions" project - a
 standalone desktop application:
 
     Game (desktop GUI):
-        main_game.py        Tkinter game window (dark space theme, score,
-                            streak, level, answer checking) - no web server
+        main_game.py        PyQt5 shell (QtWebEngine) - loads index.html
+        index.html          dark-space game page (HTML/CSS/JS game logic)
     Support files:
         requirements.txt, schema.sql, openapi.yaml, Dockerfile, README.md
     Engine traceability:
         architecture_payload.json
 
-The generated game runs with ``python main_game.py``: a single-file Tkinter
-application that picks a random fraction challenge, computes the expected
-decimal dynamically, and validates answers (trimmed input, decimal strings
-like "0.75", fraction answers like "3/4" compared numerically with a small
-tolerance).
+The generated game runs with ``python main_game.py`` (after
+``python -m pip install -r requirements.txt``): a PyQt5 desktop window
+that loads ``index.html``, which holds the game page - a random fraction
+challenge, its expected decimal computed dynamically, and robust answer
+validation (trimmed input, decimal strings like "0.75", fraction answers
+like "3/4" compared numerically with a small tolerance).
 
 The generation is scoped to this essential file set so the output stays
 compact.  Nested paths coming back from the model are flattened to their
@@ -75,9 +76,10 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 ENV_API_KEY = "DEEPSEEK_API_KEY"
 
 # The essential core file set (model-generated).  The engine additionally
-# writes architecture_payload.json, so a complete run yields 7 files total.
+# writes architecture_payload.json, so a complete run yields 8 files total.
 CORE_PROJECT_FILES: Sequence[str] = (
     "main_game.py",
+    "index.html",
     "requirements.txt",
     "schema.sql",
     "openapi.yaml",
@@ -98,31 +100,40 @@ _CORE_LOOKUP.update(
 DEFAULT_STAGES: Sequence[Dict[str, str]] = (
     {
         "name": "app",
-        "description": "Standalone Desktop Game (Python + Tkinter GUI)",
+        "description": "Standalone Desktop Game (PyQt5 + QtWebEngine)",
         "instruction": (
-            "Generate main_game.py and requirements.txt. main_game.py must "
-            "be a complete, single-file Tkinter desktop application using "
-            "only the Python standard library. It must open a dark "
-            "space-themed window (dark background, light text, one warm "
-            "accent color) with a large current-fraction display, score, "
-            "streak and level counters, an answer entry field, a Check "
-            "Answer button, a Next Challenge button and a status message "
-            "line. On startup and on every Next Challenge click it must "
-            "pick a new random fraction from a pool of at least eight (for "
-            "example 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, 9/10), compute "
-            "the expected decimal dynamically from numerator / denominator "
-            "at that moment (do not hardcode it), never repeat the same "
-            "fraction twice in a row, advance the level counter, and clear "
-            "the answer field so no placeholder such as -- ever remains. "
-            "Checking an answer must trim the input, accept decimals like "
-            "0.75 (including 0.750) and fractions like 3/4 (parsed as "
-            "numerator / denominator and compared numerically with a small "
-            "tolerance of about 0.000001), add 100 to the score and grow "
-            "the streak on success, reset the streak and show the expected "
-            "decimal on a wrong answer, and always leave the input cleared "
-            "and both buttons enabled. requirements.txt must state that "
-            "the game needs only the Python standard library (tkinter), "
-            "with no third-party packages."
+            "Generate main_game.py, index.html and requirements.txt. "
+            "index.html must contain the complete game page (HTML + CSS + "
+            "JavaScript) with the exact dark space design: dark background, "
+            "light text, one warm gold accent, a panel with chips (LEVEL, "
+            "SCORE, STREAK), a large serif fraction display, a progress "
+            "bar, an answer field, a Check Answer button and a Next "
+            "Challenge button. main_game.py must be a small PyQt5 desktop "
+            "shell - the HTML must NOT be embedded in the Python file - "
+            "that loads index.html via a clean file URL: html_path = "
+            "os.path.abspath('index.html') then view.load("
+            "QUrl.fromLocalFile(html_path)); the window title is Space "
+            "Fractions and it opens directly by running: python "
+            "main_game.py. Before any PyQt import, main_game.py must set "
+            "the GPU-disabling environment variables (import os, sys "
+            "first): os.environ['QTWEBENGINE_DISABLE_GPU'] = '1' and "
+            "os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = "
+            "'--disable-gpu --disable-software-rasterizer'. The game "
+            "logic runs in the JavaScript in index.html: on startup and "
+            "on every Next Challenge it picks a new random fraction from "
+            "a pool of at least eight (for example 1/2, 3/4, 2/5, 5/8, "
+            "1/4, 4/5, 3/10, 9/10), computes the expected decimal "
+            "dynamically (do not hardcode it), never repeats the same "
+            "fraction twice in a row, advances the LEVEL counter, clears "
+            "the answer field and keeps both buttons enabled (no "
+            "placeholder such as -- may ever stay stuck). Checking an "
+            "answer trims the input, accepts decimals like 0.75 "
+            "(including 0.750) and fractions like 3/4 (parsed as "
+            "numerator / denominator, compared with a small tolerance of "
+            "about 0.000001), adds 100 to the score and grows the streak "
+            "on success, and on a wrong answer resets the streak and "
+            "shows the expected decimal. requirements.txt must list only "
+            "PyQt5 and PyQtWebEngine (>= 5.15)."
         ),
     },
     {
@@ -140,8 +151,8 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
             "Generate openapi.yaml (OpenAPI 3.0 documenting the game's "
             "level and validate operations as its documented interface) "
             "and README.md in the project root. The README must include "
-            "the run instructions: python main_game.py, plus a short "
-            "feature and gameplay overview."
+            "the run steps: python -m pip install -r requirements.txt, "
+            "then python main_game.py, plus a short feature overview."
         ),
     },
     {
@@ -149,21 +160,25 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
         "description": "Container Packaging",
         "instruction": (
             "Generate the Dockerfile: a slim Python base image that copies "
-            "the project and runs the game (default command: python "
-            "main_game.py), with a brief comment that a display is needed "
-            "for the GUI."
+            "the project, installs requirements.txt and runs the game "
+            "(default command: python main_game.py), with a brief comment "
+            "that a display is needed for the GUI."
         ),
     },
 )
 
 _REQUIRED_FILES = """\
-- main_game.py: the complete standalone Tkinter desktop game (dark space
-  themed window with score, streak, level, fraction display, answer entry,
-  Check Answer and Next Challenge buttons) with robust answer validation
-  (trimmed input, decimals like 0.75, fractions like 3/4, small float
-  tolerance) - standard library only, no web server or HTTP code.
-- requirements.txt: dependency notes for the game (Python standard library
-  only, no third-party packages).
+- main_game.py: the small PyQt5 desktop shell (no HTML embedded in the
+  Python file) that loads index.html with QWebEngineView and disables GPU
+  acceleration via the QTWEBENGINE environment variables before any PyQt
+  import.
+- index.html: the complete game page - dark space HTML/CSS/JS UI with
+  score, streak, level, fraction display, answer entry, Check Answer and
+  Next Challenge, plus robust answer validation (trimmed input, decimals
+  like 0.75, fractions like 3/4, small float tolerance) - no server and
+  no HTTP code.
+- requirements.txt: the game's dependencies - PyQt5 and PyQtWebEngine
+  only.
 - schema.sql: full SQL DDL (tables, primary/foreign keys, constraints).
 - openapi.yaml: OpenAPI 3.0 document describing the game level and
   validate operations.
@@ -182,6 +197,7 @@ _FILE_END_RE = re.compile(r"^===END FILE===", re.MULTILINE)
 
 _STATIC_FALLBACK_ORDER: Sequence[str] = (
     "main_game.py",
+    "index.html",
     "requirements.txt",
     "schema.sql",
     "openapi.yaml",
@@ -192,226 +208,295 @@ _STATIC_FALLBACK_ORDER: Sequence[str] = (
 
 _STATIC_FILES: Dict[str, str] = {
     "main_game.py": '''\
-"""Space Fractions - standalone desktop game.
+"""Space Fractions - standalone desktop game (PyQt5 + QtWebEngine).
 
 Run with:  python main_game.py
 
-A dark, space-themed game: convert the fraction shown in the observatory
-into a decimal.  Correct answers build score and streak; a wrong answer
-shows the expected decimal and resets the streak.
+The game UI (dark space theme, HTML/CSS/JavaScript) lives in index.html
+next to this file and is loaded into a native desktop window.
+
+First install the dependencies once:
+
+    python -m pip install -r requirements.txt
+
+Then run from the project folder:
+
+    python main_game.py
 """
 
-import random
-import tkinter as tk
+import os, sys
 
-# ---------------------------------------------------------------------------
-# Palette (dark space theme)
-# ---------------------------------------------------------------------------
-BG = "#0B1020"
-PANEL = "#101A35"
-LINE = "#26304D"
-INK = "#E9EDF6"
-MUTED = "#93A1BC"
-ACCENT = "#F2B94B"
-ACCENT_DIM = "#D9A23A"
-OK = "#5FBF8F"
-BAD = "#E07777"
+os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-software-rasterizer"
 
-TOLERANCE = 0.000001
-
-CHALLENGES = (
-    ("1/2", 1, 2),
-    ("3/4", 3, 4),
-    ("2/5", 2, 5),
-    ("5/8", 5, 8),
-    ("1/4", 1, 4),
-    ("4/5", 4, 5),
-    ("3/10", 3, 10),
-    ("9/10", 9, 10),
-)
+from PyQt5.QtCore import QUrl
+from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 
 
-def parse_answer(text):
-    """Parse a player answer into a float (or None when it is not valid).
+def build_window():
+    """Create the game window (a QApplication must already exist)."""
+    window = QMainWindow()
+    window.setWindowTitle("Space Fractions")
+    window.resize(1024, 768)
 
-    Accepts decimal strings like "0.75" (including "0.750") and fraction
-    strings like "3/4" by dividing the numerator by the denominator.
-    """
-    raw = (text or "").strip()
-    if not raw:
-        return None
-    try:
-        if "/" in raw:
-            parts = raw.split("/")
-            if len(parts) != 2:
-                return None
-            numerator = float(parts[0].strip())
-            denominator = float(parts[1].strip())
-            if denominator == 0:
-                return None
-            return numerator / denominator
-        return float(raw)
-    except ValueError:
-        return None
+    view = QWebEngineView()
+    html_path = os.path.abspath("index.html")
+    if not os.path.exists(html_path):
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    view.load(QUrl.fromLocalFile(html_path))
 
-
-def choose_challenge(last_index):
-    """Return a random challenge index, never the same as the previous one."""
-    index = random.randrange(len(CHALLENGES))
-    if index == last_index:
-        index = (index + 1) % len(CHALLENGES)
-    return index
-
-
-class SpaceFractionsApp:
-    """Tkinter application for the Space Fractions game."""
-
-    def __init__(self, root):
-        self.root = root
-        self.level = 0
-        self.score = 0
-        self.streak = 0
-        self.fraction = ""
-        self.expected = 0.0
-        self._last_index = -1
-        self._build_ui()
-        self.new_challenge()
-
-    # -- layout -------------------------------------------------------------
-    def _build_ui(self):
-        self.root.title("Space Fractions")
-        self.root.configure(bg=BG)
-        self.root.geometry("520x620+60+40")
-        self.root.minsize(460, 540)
-
-        outer = tk.Frame(self.root, bg=BG)
-        outer.pack(fill="both", expand=True, padx=22, pady=18)
-
-        tk.Label(outer, text="OBSERVATORY CHALLENGE", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(anchor="w")
-        tk.Label(outer, text="Space Fractions", bg=BG, fg=INK,
-                 font=("Segoe UI", 20, "bold")).pack(anchor="w", pady=(2, 0))
-        tk.Label(outer, text="Convert the fraction to a decimal.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 14))
-
-        panel = tk.Frame(outer, bg=PANEL, highlightbackground=LINE,
-                         highlightthickness=1)
-        panel.pack(fill="both", expand=True)
-
-        body = tk.Frame(panel, bg=PANEL)
-        body.pack(fill="both", expand=True, padx=18, pady=16)
-
-        chips = tk.Frame(body, bg=PANEL)
-        chips.pack(fill="x")
-        self.level_var = tk.StringVar(value="LEVEL 0")
-        self.score_var = tk.StringVar(value="SCORE 0")
-        self.streak_var = tk.StringVar(value="STREAK 0")
-        for var in (self.level_var, self.score_var, self.streak_var):
-            tk.Label(chips, textvariable=var, bg=PANEL, fg=MUTED,
-                     font=("Consolas", 10), bd=1, relief="solid",
-                     padx=9, pady=3).pack(side="left", padx=(0, 6))
-
-        self.fraction_var = tk.StringVar(value="--")
-        tk.Label(body, textvariable=self.fraction_var, bg=PANEL, fg=INK,
-                 font=("Georgia", 50, "bold")).pack(pady=(20, 4))
-
-        tk.Label(body, text="What decimal value does this fraction equal?",
-                 bg=PANEL, fg=MUTED, font=("Segoe UI", 10)).pack(pady=(0, 10))
-
-        row = tk.Frame(body, bg=PANEL)
-        row.pack(fill="x")
-        self.entry = tk.Entry(row, bg="#0C1428", fg=INK, insertbackground=INK,
-                              font=("Consolas", 13), relief="flat",
-                              highlightbackground=LINE, highlightcolor=ACCENT,
-                              highlightthickness=1)
-        self.entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
-        self.entry.bind("<Return>", lambda event: self.check_answer())
-        self.check_button = tk.Button(row, text="Check Answer",
-                                      command=self.check_answer, bg=ACCENT,
-                                      fg="#1A1408", activebackground=ACCENT_DIM,
-                                      activeforeground="#1A1408", relief="flat",
-                                      font=("Segoe UI", 10, "bold"), padx=14,
-                                      pady=7, cursor="hand2")
-        self.check_button.pack(side="left")
-
-        self.feedback_var = tk.StringVar(value="")
-        self.feedback_label = tk.Label(body, textvariable=self.feedback_var,
-                                       bg=PANEL, fg=MUTED, font=("Segoe UI", 10),
-                                       anchor="w", justify="left", wraplength=380)
-        self.feedback_label.pack(fill="x", pady=(12, 0))
-
-        self.next_button = tk.Button(body, text="Next Challenge",
-                                     command=self.new_challenge, bg=PANEL,
-                                     fg=MUTED, activebackground=PANEL,
-                                     activeforeground=INK, relief="solid", bd=1,
-                                     font=("Segoe UI", 10), padx=12, pady=6,
-                                     cursor="hand2")
-        self.next_button.pack(anchor="w", pady=(14, 0))
-
-        tk.Label(body, text="Decimals (0.75) and fractions (3/4) are both accepted.",
-                 bg=PANEL, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(14, 0))
-
-    # -- game flow ----------------------------------------------------------
-    def new_challenge(self):
-        self._last_index = choose_challenge(self._last_index)
-        fraction, numerator, denominator = CHALLENGES[self._last_index]
-        self.fraction = fraction
-        self.expected = round(numerator / denominator, 3)
-        self.level += 1
-        self.fraction_var.set(fraction)
-        self.level_var.set("LEVEL " + str(self.level))
-        self._set_feedback("")
-        self.entry.delete(0, "end")
-        self.entry.focus_set()
-        self.check_button.config(state="normal")
-        self.next_button.config(state="normal")
-
-    def check_answer(self):
-        submitted = parse_answer(self.entry.get())
-        if submitted is None:
-            self._set_feedback("Type a decimal (0.75) or a fraction (3/4).", BAD)
-            self.entry.focus_set()
-            return
-        if abs(submitted - self.expected) <= TOLERANCE:
-            self.score += 100
-            self.streak += 1
-            self.score_var.set("SCORE " + str(self.score))
-            self.streak_var.set("STREAK " + str(self.streak))
-            self._set_feedback("Correct. " + self.fraction + " = " + self._fmt(self.expected) + ".", OK)
-        else:
-            self.streak = 0
-            self.streak_var.set("STREAK 0")
-            self._set_feedback("Not quite. " + self.fraction + " = " + self._fmt(self.expected) + ".", BAD)
-        self.entry.delete(0, "end")
-        self.entry.focus_set()
-
-    # -- helpers ------------------------------------------------------------
-    @staticmethod
-    def _fmt(value):
-        text = ("%.3f" % value).rstrip("0").rstrip(".")
-        return text if text else "0"
-
-    def _set_feedback(self, text, color=MUTED):
-        self.feedback_var.set(text)
-        self.feedback_label.config(fg=color)
+    window.setCentralWidget(view)
+    return window
 
 
 def main():
-    root = tk.Tk()
-    SpaceFractionsApp(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = build_window()
+    window.show()
+    sys.exit(app.exec_())
 
 
 if __name__ == "__main__":
     main()
 ''',
+    "index.html": '''\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Space Fractions</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0B1020;
+    --panel: #101A35;
+    --line: #26304D;
+    --ink: #E9EDF6;
+    --muted: #93A1BC;
+    --accent: #F2B94B;
+    --accent-dim: #D9A23A;
+    --ok: #5FBF8F;
+    --bad: #E07777;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .board { width: min(100%, 560px); }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 6px;
+  }
+  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0.02em; }
+  .tagline { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 22px;
+  }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .chip {
+    font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
+    font-size: 12px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 4px 10px; white-space: nowrap;
+  }
+  .chips { display: flex; gap: 8px; align-items: center; }
+  .fraction {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 700; text-align: center;
+    font-size: 72px; line-height: 1.05; margin: 8px 0 6px;
+  }
+  .bar {
+    height: 8px; border: 1px solid var(--line); border-radius: 3px;
+    background: #0C1428; overflow: hidden; margin: 12px 0 6px;
+  }
+  .bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
+  .hint { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 16px; }
+  .row { display: flex; gap: 10px; }
+  input[type="text"] {
+    flex: 1; min-width: 0;
+    background: #0C1428; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 4px;
+    padding: 12px 14px; font-size: 15px;
+    font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
+  }
+  input[type="text"]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+    border-color: var(--accent);
+  }
+  button {
+    border: 0; border-radius: 4px; font-size: 14px; font-weight: 600;
+    padding: 12px 20px; cursor: pointer; font-family: inherit;
+  }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent); color: #1A1408; }
+  .primary:hover { background: var(--accent-dim); }
+  .primary:disabled { opacity: 0.55; cursor: default; }
+  .ghost {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--line);
+  }
+  .ghost:hover { color: var(--ink); border-color: var(--muted); }
+  .meta {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 14px; gap: 10px;
+  }
+  .feedback { min-height: 20px; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+  .feedback.ok { color: var(--ok); }
+  .feedback.bad { color: var(--bad); }
+  @media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
+</style>
+</head>
+<body>
+<main class="board">
+  <p class="eyebrow">Observatory Challenge</p>
+  <h1>Space Fractions</h1>
+  <p class="tagline">Read the fraction, convert it to a decimal, and submit your answer.</p>
+  <section class="panel">
+    <div class="panel-head">
+      <span class="eyebrow" style="margin: 0;">Current fraction</span>
+      <span class="chips"><span class="chip">LEVEL <span id="level">1</span></span><span class="chip">SCORE <span id="score">0</span></span><span class="chip">STREAK <span id="streak">0</span></span></span>
+    </div>
+    <div class="fraction" id="current-fraction">--</div>
+    <div class="bar"><div class="bar-fill" id="bar"></div></div>
+    <p class="hint">What decimal value does this fraction equal?</p>
+    <div class="row">
+      <input id="answer" type="text" inputmode="decimal" placeholder="e.g. 0.75 or 3/4" aria-label="Your answer" autocomplete="off">
+      <button class="primary" id="check" type="button">Check Answer</button>
+    </div>
+    <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+    <div class="meta">
+      <button class="ghost" id="next" type="button">Next Challenge</button>
+      <span class="hint" style="margin: 0;">answers are checked instantly</span>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  "use strict";
+  var CHALLENGES = [
+    ["1/2", 1, 2],
+    ["3/4", 3, 4],
+    ["2/5", 2, 5],
+    ["5/8", 5, 8],
+    ["1/4", 1, 4],
+    ["4/5", 4, 5],
+    ["3/10", 3, 10],
+    ["9/10", 9, 10]
+  ];
+  var TOLERANCE = 0.000001;
+  var state = { fraction: "", expected: 0, score: 0, streak: 0, level: 0, lastIndex: -1 };
+  var el = {
+    fraction: document.getElementById("current-fraction"),
+    bar: document.getElementById("bar"),
+    answer: document.getElementById("answer"),
+    check: document.getElementById("check"),
+    next: document.getElementById("next"),
+    feedback: document.getElementById("feedback"),
+    score: document.getElementById("score"),
+    level: document.getElementById("level"),
+    streak: document.getElementById("streak")
+  };
+  function setFeedback(message, kind) {
+    el.feedback.textContent = message || "";
+    el.feedback.className = "feedback" + (kind ? " " + kind : "");
+  }
+  function parseAnswer(text) {
+    var raw = (text || "").trim();
+    if (!raw) { return null; }
+    if (raw.indexOf("/") !== -1) {
+      var parts = raw.split("/");
+      if (parts.length !== 2) { return null; }
+      var numerator = Number(parts[0].trim());
+      var denominator = Number(parts[1].trim());
+      if (!isFinite(numerator) || !isFinite(denominator) || denominator === 0) { return null; }
+      return numerator / denominator;
+    }
+    var parsed = Number(raw);
+    return isFinite(parsed) ? parsed : null;
+  }
+  function fmt(value) {
+    var text = value.toFixed(3).replace(/0+$/, "").replace(/[.]$/, "");
+    return text || "0";
+  }
+  function renderFraction(fraction) {
+    state.fraction = fraction;
+    el.fraction.textContent = fraction;
+    var parts = fraction.split("/");
+    var ratio = parts.length === 2 ? Number(parts[0]) / Number(parts[1]) : 0;
+    el.bar.style.width = isFinite(ratio) && ratio > 0 ? Math.max(4, Math.min(100, ratio * 100)) + "%" : "0%";
+    el.answer.value = "";
+    el.answer.focus();
+  }
+  function newChallenge() {
+    var index = Math.floor(Math.random() * CHALLENGES.length);
+    if (index === state.lastIndex) { index = (index + 1) % CHALLENGES.length; }
+    state.lastIndex = index;
+    var entry = CHALLENGES[index];
+    state.expected = Math.round((entry[1] / entry[2]) * 1000) / 1000;
+    state.level += 1;
+    el.level.textContent = String(state.level);
+    renderFraction(entry[0]);
+    setFeedback("", "");
+  }
+  function checkAnswer() {
+    var value = parseAnswer(el.answer.value);
+    if (value === null) {
+      setFeedback("Type a decimal (0.75) or a fraction (3/4).", "bad");
+      el.answer.focus();
+      return;
+    }
+    if (Math.abs(value - state.expected) <= TOLERANCE) {
+      state.score += 100;
+      state.streak += 1;
+      el.score.textContent = String(state.score);
+      el.streak.textContent = String(state.streak);
+      setFeedback("Correct. " + state.fraction + " = " + fmt(state.expected) + ".", "ok");
+    } else {
+      state.streak = 0;
+      el.streak.textContent = "0";
+      setFeedback("Not quite. " + state.fraction + " = " + fmt(state.expected) + ".", "bad");
+    }
+    el.answer.value = "";
+    el.answer.focus();
+  }
+  el.check.addEventListener("click", checkAnswer);
+  el.next.addEventListener("click", newChallenge);
+  el.answer.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") { checkAnswer(); }
+  });
+  window.__game = state;
+  newChallenge();
+})();
+</script>
+</body>
+</html>
+''',
     "requirements.txt": (
         "# Space Fractions - desktop game requirements\n"
         "#\n"
-        "# No third-party packages: the game runs on the Python\n"
-        "# standard library only (tkinter ships with the python.org installers).\n"
+        "# The window uses PyQt5 + QtWebEngine (web technologies rendered\n"
+        "# natively in a desktop window).\n"
         "#\n"
-        "# Just run:  python main_game.py\n"
+        "# Install once:\n"
+        "#     python -m pip install -r requirements.txt\n"
+        "#\n"
+        "# Then run:\n"
+        "#     python main_game.py\n"
+        "\n"
+        "PyQt5>=5.15.11\n"
+        "PyQtWebEngine>=5.15.7\n"
     ),
     "schema.sql": (
         "-- Space Fractions Database Schema\n"
@@ -451,19 +536,26 @@ if __name__ == "__main__":
         "FROM python:3.12-slim\n"
         "WORKDIR /app\n"
         "COPY . .\n"
-        "# The game is a Tkinter GUI: run it on a desktop session with a display.\n"
+        "RUN pip install --no-cache-dir -r requirements.txt\n"
+        "# The game is a GUI app: run it inside a desktop session with a display.\n"
         'CMD ["python", "main_game.py"]\n'
     ),
     "README.md": (
         "# Space Fractions - Desktop Game\n\n"
-        "A standalone desktop game built with Python and Tkinter: read the\n"
+        "A standalone desktop game built with PyQt5 + QtWebEngine: the dark\n"
+        "space-themed game UI is rendered inside a native window. Read the\n"
         "fraction on screen, convert it to a decimal, and build your score\n"
-        "and streak. Dark space theme, no web server required.\n\n"
+        "and streak.\n\n"
         "## Run\n\n"
+        "Install the dependencies once:\n\n"
+        "```bash\n"
+        "python -m pip install -r requirements.txt\n"
+        "```\n\n"
+        "Then start the game:\n\n"
         "```bash\n"
         "python main_game.py\n"
         "```\n\n"
-        "No third-party packages are needed (tkinter ships with Python).\n\n"
+        "The game window opens directly (no browser, no server).\n\n"
         "## How to play\n\n"
         "- A new random fraction appears on every challenge (1/2, 3/4, ...).\n"
         "- Type the decimal (0.75) or the fraction itself (3/4), then press\n"
@@ -472,8 +564,9 @@ if __name__ == "__main__":
         "- A wrong answer shows the expected decimal and resets the streak.\n"
         "- Next Challenge rolls a fresh fraction and advances the level.\n\n"
         "## Project files\n\n"
-        "- `main_game.py` - the complete game (Tkinter UI + game logic)\n"
-        "- `requirements.txt` - dependency notes (standard library only)\n"
+        "- `main_game.py` - the PyQt5 desktop shell (loads index.html)\n"
+        "- `index.html` - the game page (dark space HTML/CSS/JS UI)\n"
+        "- `requirements.txt` - PyQt5 and PyQtWebEngine (the only dependencies)\n"
         "- `schema.sql` - example database schema (players, sessions)\n"
         "- `openapi.yaml` - documented interface of the game operations\n"
         "- `Dockerfile` - container packaging (needs a display for the GUI)\n"
@@ -718,8 +811,9 @@ def build_system_prompt(project_name: str = "Space Fractions") -> str:
     """Return the system prompt that drives the file generation."""
     return f"""You are CodeAgent, a senior Python developer and DevOps engineer.
 You turn architecture documentation into a complete, production-ready,
-error-free standalone desktop application for "{project_name}": a dark
-space-themed Tkinter game (no web server, no browser UI).
+error-free standalone desktop application for "{project_name}": a PyQt5
+window (QtWebEngine) that renders the game's own dark space-themed web
+design - no browser and no web server.
 
 ## Deliverables
 Generate all of the following across the requested stages:
@@ -744,29 +838,34 @@ Generate all of the following across the requested stages:
 ===FILE: <relative/path/to/file>===
 <complete file content>
 ===END FILE===
-- Only the core files are expected (all at the project root). Never emit
-  server.js, package.json, public/index.html, Express, Flask or any other
-  web files - this is a desktop application. Files outside the core set
-  are ignored.
+- Only the core files are expected (all at the project root): main_game.py
+  (the PyQt5 shell), index.html (the game page), requirements.txt,
+  schema.sql, openapi.yaml, Dockerfile and README.md. Never emit
+  server.js, package.json, Express, Flask or any other web code - there
+  is no server. Files outside the core set are ignored.
 - Never wrap file contents in markdown code fences and never truncate a
   file; no "..." or "TODO" placeholders - full content only.
 
 ## Quality bar (must all hold)
 - Production-ready and error-free. No syntax errors: every opening brace
   has a matching closing brace, every string literal is correctly quoted,
-  and every import exists (standard library only for main_game.py - no pip
-  installs may be required to run it). JSON, YAML and SQL must be valid.
-- Fully consistent: the game logic, the README run instructions and the
-  Dockerfile must all describe the same single-file Tkinter desktop game
-  (python main_game.py); there is no web server and there are no HTTP
-  calls anywhere in the project.
-- The game window must be complete and usable: dark space-themed; score,
-  streak and level counters; a large fraction display that is filled
-  immediately from the game state (a placeholder like -- must never get
-  stuck); a bound Check Answer button; a Next Challenge action; an answer
-  field that is cleared and buttons that stay enabled after every action;
-  and a status message that reports correct/incorrect answers including
-  the expected decimal when wrong.
+  and every import exists (main_game.py may only import the standard
+  library plus PyQt5/QtWebEngine, both listed in requirements.txt, and it
+  must set QTWEBENGINE_DISABLE_GPU and QTWEBENGINE_CHROMIUM_FLAGS before
+  any PyQt import). JSON, YAML and SQL must be valid.
+- Fully consistent: the game logic in index.html, the README run
+  instructions and the Dockerfile must all describe the same PyQt5
+  desktop game (pip install -r requirements.txt, then python
+  main_game.py); main_game.py loads index.html via QUrl.fromLocalFile;
+  there is no web server and no HTTP calls.
+- The desktop window must be complete and usable: it renders the exact
+  dark space-themed web design (chips for score, streak and level, a
+  large Georgia fraction display, gold accent, progress bar, clean
+  layout) from index.html; the fraction display is filled
+  immediately (a placeholder like -- must never get stuck); Check Answer
+  and Next Challenge are bound; the answer field is cleared and the
+  buttons stay enabled after every action; and a status message reports
+  correct/incorrect answers including the expected decimal when wrong.
 """
 
 
@@ -977,9 +1076,9 @@ def _request_stage_files(
 def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     """Generate the desktop game project files with the live DeepSeek API.
 
-    The output covers the Tkinter desktop game (main_game.py), the SQL
-    schema, OpenAPI spec, Dockerfile, README and the payload copy, so the
-    reported file count is stable.  Truncated responses are recovered
+    The output covers the PyQt5 desktop game (main_game.py + index.html),
+    the SQL schema, OpenAPI spec, Dockerfile, README and the payload copy,
+    so the reported file count is stable.  Truncated responses are recovered
     automatically (salvage + high-quality static completion) and the
     summary always contains a non-zero ``files_written`` list.
     """
