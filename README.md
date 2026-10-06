@@ -72,7 +72,7 @@ Architecture_View.md ──────────┘        (cleaned text + se
 DeepSeek is instructed to answer with one block per file:
 
 ```
-===FILE: src/server.js===
+===FILE: main_game.py===
 <complete file content>
 ===END FILE===
 ```
