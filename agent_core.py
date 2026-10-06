@@ -118,7 +118,11 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
             "decimal strings like \"0.75\" and fraction strings like "
             "\"3/4\" by parsing numerator/denominator, and compares "
             "numerically with a small float tolerance). It must listen on "
-            "process.env.PORT or port 3000."
+            "process.env.PORT or port 3000. The package.json must stay "
+            "clean: declare only the runtime dependencies express "
+            "(^4.21.2) and cors (^2.8.5) - no devDependencies, no "
+            "test-runner packages (such as jest or supertest), no unused "
+            "extras - and define the start script as \"node server.js\"."
         ),
     },
     {
@@ -213,10 +217,9 @@ _STATIC_FILES: Dict[str, str] = {
             "version": "1.0.0",
             "description": "Space Fractions Game API + interactive UI",
             "main": "server.js",
-            "scripts": {"start": "node server.js", "test": "jest"},
+            "scripts": {"start": "node server.js"},
             "dependencies": {
-                "express": "^4.18.2",
-                "pg": "^8.11.0",
+                "express": "^4.21.2",
                 "cors": "^2.8.5",
             },
         },
