@@ -4,28 +4,25 @@ agent_core.py - DeepSeek generation engine for the CodeAgent_DeepSeek pipeline.
 Takes the structured architecture payload produced by ``parser.py`` and asks
 the official DeepSeek API (OpenAI-compatible ``/v1/chat/completions``) to
 generate the complete, production-ready "Space Fractions" project - a
-full-stack app:
+standalone desktop application:
 
-    Frontend (game UI):
-        public/index.html   self-contained interactive HTML/CSS/JS game page
-    Backend (REST API):
-        package.json, server.js, Dockerfile, schema.sql, openapi.yaml,
-        test.js, README.md
+    Game (desktop GUI):
+        main_game.py        Tkinter game window (dark space theme, score,
+                            streak, level, answer checking) - no web server
+    Support files:
+        requirements.txt, schema.sql, openapi.yaml, Dockerfile, README.md
     Engine traceability:
         architecture_payload.json
 
-The generated Express app serves the game UI from the ``public`` directory
-and exposes the REST endpoints ``GET /api/v1/game/fractions/level`` and
-``POST /api/v1/game/fractions/validate`` (robust validation: trimmed input,
-decimal strings like "0.75", fraction answers like "3/4" compared
-numerically with a small tolerance).  After generation, running
-``npm install`` + ``npm start`` and opening http://localhost:3000 shows the
-interactive game in the browser.
+The generated game runs with ``python main_game.py``: a single-file Tkinter
+application that picks a random fraction challenge, computes the expected
+decimal dynamically, and validates answers (trimmed input, decimal strings
+like "0.75", fraction answers like "3/4" compared numerically with a small
+tolerance).
 
 The generation is scoped to this essential file set so the output stays
 compact.  Nested paths coming back from the model are flattened to their
-core file names (the single exception being ``public/index.html``), and
-anything outside the core set is skipped (and logged).
+core file names, and anything outside the core set is skipped (and logged).
 
 Robustness: if an API response is cut off mid-file (token truncation), the
 engine does NOT crash.  It salvages what it can by closing the open file
@@ -78,15 +75,13 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 ENV_API_KEY = "DEEPSEEK_API_KEY"
 
 # The essential core file set (model-generated).  The engine additionally
-# writes architecture_payload.json, so a complete run yields 9 files total.
+# writes architecture_payload.json, so a complete run yields 7 files total.
 CORE_PROJECT_FILES: Sequence[str] = (
-    "package.json",
-    "server.js",
-    "public/index.html",
-    "Dockerfile",
+    "main_game.py",
+    "requirements.txt",
     "schema.sql",
     "openapi.yaml",
-    "test.js",
+    "Dockerfile",
     "README.md",
 )
 
@@ -95,60 +90,39 @@ _CORE_LOOKUP.update(
     {
         "openapi.yml": "openapi.yaml",
         "readme": "README.md",
-        "index.html": "public/index.html",
+        "main.py": "main_game.py",
+        "game.py": "main_game.py",
     }
 )
 
 DEFAULT_STAGES: Sequence[Dict[str, str]] = (
     {
-        "name": "backend",
-        "description": "Node.js/Express Backend Services & APIs",
+        "name": "app",
+        "description": "Standalone Desktop Game (Python + Tkinter GUI)",
         "instruction": (
-            "Generate package.json and server.js. server.js must be a "
-            "single-file Express app in the project root that serves the "
-            "static game UI from the public directory (express.static) and "
-            "implements: GET /api/v1/game/fractions/level (dynamic: on EVERY "
-            "call it picks a random fraction from a pool of at least eight "
-            "entries - for example 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, "
-            "9/10 - computes expectedDecimal from numerator / denominator "
-            "at request time, responds as { \"status\": \"success\", "
-            "\"level\": <incrementing number>, \"fraction\": \"3/4\", "
-            "\"expectedDecimal\": 0.75 }, never returns the same fraction "
-            "twice in a row, and never hardcodes a single static fraction) "
-            "and POST "
-            "/api/v1/game/fractions/validate (trims the answer, accepts "
-            "decimal strings like \"0.75\" and fraction strings like "
-            "\"3/4\" by parsing numerator/denominator, and compares "
-            "numerically with a small float tolerance). It must listen on "
-            "process.env.PORT or port 3000. The package.json must stay "
-            "clean: declare only the runtime dependencies express "
-            "(^4.21.2) and cors (^2.8.5) - no devDependencies, no "
-            "test-runner packages (such as jest or supertest), no unused "
-            "extras - and define the start script as \"node server.js\"."
-        ),
-    },
-    {
-        "name": "frontend",
-        "description": "Interactive Space Fractions Game UI (HTML/CSS/JS)",
-        "instruction": (
-            "Generate public/index.html: a complete, self-contained "
-            "interactive Space Fractions game UI with inline CSS and inline "
-            "JavaScript (no external libraries or asset files). It must "
-            "fetch /api/v1/game/fractions/level on initial page load AND "
-            "every time the next-challenge button is clicked, parse the "
-            "JSON response, and immediately update the fraction display "
-            "(id=\"current-fraction\") plus the LEVEL counter from the "
-            "response so no placeholder (such as --) is ever left showing. "
-            "The Submit/Check button must have a click handler that POSTs "
-            "{ \"answer\": <text>, \"fraction\": <current fraction> } to "
-            "/api/v1/game/fractions/validate and then updates Score, "
-            "Streak (consecutive correct answers, reset on a wrong answer) "
-            "and a status message (showing the expected decimal when "
-            "wrong). After every fetch, clear the answer input and ensure "
-            "both buttons are enabled; treat fetch failures gracefully "
-            "(message plus a working retry via the next-challenge button) "
-            "so the page can never get stuck. Clean, space-themed, "
-            "responsive design with no syntax errors."
+            "Generate main_game.py and requirements.txt. main_game.py must "
+            "be a complete, single-file Tkinter desktop application using "
+            "only the Python standard library. It must open a dark "
+            "space-themed window (dark background, light text, one warm "
+            "accent color) with a large current-fraction display, score, "
+            "streak and level counters, an answer entry field, a Check "
+            "Answer button, a Next Challenge button and a status message "
+            "line. On startup and on every Next Challenge click it must "
+            "pick a new random fraction from a pool of at least eight (for "
+            "example 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, 9/10), compute "
+            "the expected decimal dynamically from numerator / denominator "
+            "at that moment (do not hardcode it), never repeat the same "
+            "fraction twice in a row, advance the level counter, and clear "
+            "the answer field so no placeholder such as -- ever remains. "
+            "Checking an answer must trim the input, accept decimals like "
+            "0.75 (including 0.750) and fractions like 3/4 (parsed as "
+            "numerator / denominator and compared numerically with a small "
+            "tolerance of about 0.000001), add 100 to the score and grow "
+            "the streak on success, reset the streak and show the expected "
+            "decimal on a wrong answer, and always leave the input cleared "
+            "and both buttons enabled. requirements.txt must state that "
+            "the game needs only the Python standard library (tkinter), "
+            "with no third-party packages."
         ),
     },
     {
@@ -161,40 +135,42 @@ DEFAULT_STAGES: Sequence[Dict[str, str]] = (
     },
     {
         "name": "docs",
-        "description": "OpenAPI Specifications & Documentation",
+        "description": "Documentation & Interface Specification",
         "instruction": (
-            "Generate openapi.yaml (OpenAPI 3.0 covering every API endpoint, "
-            "including both the level and validate operations) and README.md "
-            "in the project root. The README must include the run "
-            "instructions: npm install, npm start, then open "
-            "http://localhost:3000 to play."
+            "Generate openapi.yaml (OpenAPI 3.0 documenting the game's "
+            "level and validate operations as its documented interface) "
+            "and README.md in the project root. The README must include "
+            "the run instructions: python main_game.py, plus a short "
+            "feature and gameplay overview."
         ),
     },
     {
-        "name": "tests",
-        "description": "Automated Test Suites & Containerization",
+        "name": "container",
+        "description": "Container Packaging",
         "instruction": (
-            "Generate test.js (Jest + Supertest covering the API flows, "
-            "including an answer submitted as the fraction string \"3/4\") "
-            "and the Dockerfile in the project root."
+            "Generate the Dockerfile: a slim Python base image that copies "
+            "the project and runs the game (default command: python "
+            "main_game.py), with a brief comment that a display is needed "
+            "for the GUI."
         ),
     },
 )
 
 _REQUIRED_FILES = """\
-- package.json: npm manifest with a realistic name, scripts (start/test) and
-  pinned dependencies (express, pg, cors only).
-- server.js: single-file Express server that serves the game UI from the
-  public directory and implements the REST API with robust validation.
-- public/index.html: self-contained interactive frontend game page (inline
-  CSS + inline JavaScript, no extra asset files) that talks to the REST API.
-- schema.sql: SQL DDL with tables, keys and constraints.
-- openapi.yaml: OpenAPI 3.0 specification covering every endpoint.
-- test.js: automated tests (Jest + Supertest) for the API flows.
-- README.md: short project README with run instructions (npm install,
-  npm start, then open http://localhost:3000).
-- All files live at the project root except public/index.html; do not create
-  any other directories.
+- main_game.py: the complete standalone Tkinter desktop game (dark space
+  themed window with score, streak, level, fraction display, answer entry,
+  Check Answer and Next Challenge buttons) with robust answer validation
+  (trimmed input, decimals like 0.75, fractions like 3/4, small float
+  tolerance) - standard library only, no web server or HTTP code.
+- requirements.txt: dependency notes for the game (Python standard library
+  only, no third-party packages).
+- schema.sql: full SQL DDL (tables, primary/foreign keys, constraints).
+- openapi.yaml: OpenAPI 3.0 document describing the game level and
+  validate operations.
+- Dockerfile: slim Python image that runs the game (python main_game.py).
+- README.md: run instructions (python main_game.py) and a gameplay overview.
+- No web files: do not emit server.js, package.json, public/index.html,
+  Express, Flask or any other web code - the game is a desktop app.
 """
 
 _FILE_BLOCK_RE = re.compile(
@@ -205,349 +181,237 @@ _FILE_START_RE = re.compile(r"^===FILE:", re.MULTILINE)
 _FILE_END_RE = re.compile(r"^===END FILE===", re.MULTILINE)
 
 _STATIC_FALLBACK_ORDER: Sequence[str] = (
-    "package.json",
-    "server.js",
-    "public/index.html",
-    "Dockerfile",
+    "main_game.py",
+    "requirements.txt",
     "schema.sql",
     "openapi.yaml",
-    "test.js",
+    "Dockerfile",
     "README.md",
     "architecture_payload.json",
 )
 
 _STATIC_FILES: Dict[str, str] = {
-    "package.json": json.dumps(
-        {
-            "name": "space-fractions-backend",
-            "version": "1.0.0",
-            "description": "Space Fractions Game API + interactive UI",
-            "main": "server.js",
-            "scripts": {"start": "node server.js"},
-            "dependencies": {
-                "express": "^4.21.2",
-                "cors": "^2.8.5",
-            },
-        },
-        indent=2,
-    ),
-    "server.js": (
-        "const express = require('express');\n"
-        "const path = require('path');\n\n"
-        "const app = express();\n"
-        "app.use(express.json());\n"
-        "app.use(express.static(path.join(__dirname, 'public')));\n\n"
-        "const CHALLENGES = [\n"
-        "    { fraction: '1/2', numerator: 1, denominator: 2 },\n"
-        "    { fraction: '3/4', numerator: 3, denominator: 4 },\n"
-        "    { fraction: '2/5', numerator: 2, denominator: 5 },\n"
-        "    { fraction: '5/8', numerator: 5, denominator: 8 },\n"
-        "    { fraction: '1/4', numerator: 1, denominator: 4 },\n"
-        "    { fraction: '4/5', numerator: 4, denominator: 5 },\n"
-        "    { fraction: '3/10', numerator: 3, denominator: 10 },\n"
-        "    { fraction: '9/10', numerator: 9, denominator: 10 },\n"
-        "];\n"
-        "let lastChallengeIndex = -1;\n"
-        "let levelCounter = 0;\n\n"
-        "function toNumber(text) {\n"
-        "    const raw = String(text == null ? '' : text).trim();\n"
-        "    if (!raw) {\n"
-        "        return NaN;\n"
-        "    }\n"
-        "    if (raw.indexOf('/') !== -1) {\n"
-        "        const parts = raw.split('/');\n"
-        "        if (parts.length !== 2) {\n"
-        "            return NaN;\n"
-        "        }\n"
-        "        const numerator = Number(parts[0].trim());\n"
-        "        const denominator = Number(parts[1].trim());\n"
-        "        if (!isFinite(numerator) || !isFinite(denominator) || denominator === 0) {\n"
-        "            return NaN;\n"
-        "        }\n"
-        "        return numerator / denominator;\n"
-        "    }\n"
-        "    const parsed = Number(raw);\n"
-        "    return isFinite(parsed) ? parsed : NaN;\n"
-        "}\n\n"
-        "app.get('/api/v1/game/fractions/level', (req, res) => {\n"
-        "    levelCounter += 1;\n"
-        "    let index = Math.floor(Math.random() * CHALLENGES.length);\n"
-        "    if (index === lastChallengeIndex) {\n"
-        "        index = (index + 1) % CHALLENGES.length;\n"
-        "    }\n"
-        "    lastChallengeIndex = index;\n"
-        "    const challenge = CHALLENGES[index];\n"
-        "    const value = challenge.numerator / challenge.denominator;\n"
-        "    const expectedDecimal = Math.round(value * 1000) / 1000;\n"
-        "    res.json({ status: 'success', level: levelCounter, fraction: challenge.fraction, expectedDecimal: expectedDecimal });\n"
-        "});\n\n"
-        "app.post('/api/v1/game/fractions/validate', (req, res) => {\n"
-        "    const body = req.body || {};\n"
-        "    const submitted = toNumber(body.answer);\n"
-        "    const expected = body.fraction ? toNumber(body.fraction) : NaN;\n"
-        "    const candidates = isFinite(expected)\n"
-        "        ? [expected]\n"
-        "        : CHALLENGES.map((challenge) => challenge.numerator / challenge.denominator);\n"
-        "    const correct = isFinite(submitted) && candidates.some((target) => {\n"
-        "        return Math.abs(submitted - target) < 0.000001;\n"
-        "    });\n"
-        "    const reference = isFinite(expected) ? expected : candidates[0];\n"
-        "    const rounded = isFinite(reference) ? Math.round(reference * 1000) / 1000 : null;\n"
-        "    res.json({ correct: correct, score: correct ? 100 : 0, expected: rounded === null ? null : String(rounded) });\n"
-        "});\n\n"
-        "app.get('/', (req, res) => {\n"
-        "    res.sendFile(path.join(__dirname, 'public', 'index.html'));\n"
-        "});\n\n"
-        "const PORT = process.env.PORT || 3000;\n"
-        "app.listen(PORT, () => {\n"
-        "    console.log('Space Fractions server running at http://localhost:' + PORT);\n"
-        "});\n"
-    ),
-    "public/index.html": """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Space Fractions</title>
-<style>
-  :root {
-    color-scheme: dark;
-    --bg: #0B1020;
-    --panel: #101A35;
-    --line: #26304D;
-    --ink: #E9EDF6;
-    --muted: #93A1BC;
-    --accent: #F2B94B;
-    --accent-dim: #D9A23A;
-    --ok: #5FBF8F;
-    --bad: #E07777;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh;
-    display: flex; align-items: center; justify-content: center;
-    padding: 28px 16px;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-  }
-  .board { width: min(100%, 560px); }
-  .eyebrow {
-    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
-    color: var(--muted); margin: 0 0 6px;
-  }
-  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0.02em; }
-  .tagline { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 22px;
-  }
-  .panel-head {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 12px;
-  }
-  .chip {
-    font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
-    font-size: 12px; color: var(--muted);
-    border: 1px solid var(--line); border-radius: 3px;
-    padding: 4px 10px; white-space: nowrap;
-  }
-  .chips { display: flex; gap: 8px; align-items: center; }
-  .fraction {
-    font-family: Georgia, "Times New Roman", serif;
-    font-weight: 700; text-align: center;
-    font-size: clamp(56px, 16vw, 88px);
-    line-height: 1.05; margin: 8px 0 6px;
-  }
-  .bar {
-    height: 8px; border: 1px solid var(--line); border-radius: 3px;
-    background: #0C1428; overflow: hidden; margin: 12px 0 6px;
-  }
-  .bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
-  .hint { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 16px; }
-  .row { display: flex; gap: 10px; }
-  input[type="text"] {
-    flex: 1; min-width: 0;
-    background: #0C1428; color: var(--ink);
-    border: 1px solid var(--line); border-radius: 4px;
-    padding: 12px 14px; font-size: 15px;
-    font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
-  }
-  input[type="text"]:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 1px;
-    border-color: var(--accent);
-  }
-  button {
-    border: 0; border-radius: 4px; font-size: 14px; font-weight: 600;
-    padding: 12px 20px; cursor: pointer; font-family: inherit;
-  }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .primary { background: var(--accent); color: #1A1408; }
-  .primary:hover { background: var(--accent-dim); }
-  .primary:disabled { opacity: 0.55; cursor: default; }
-  .ghost {
-    background: transparent; color: var(--muted);
-    border: 1px solid var(--line);
-  }
-  .ghost:hover { color: var(--ink); border-color: var(--muted); }
-  .meta {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-top: 14px; gap: 10px;
-  }
-  .feedback { min-height: 20px; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
-  .feedback.ok { color: var(--ok); }
-  .feedback.bad { color: var(--bad); }
-  @media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
-  @media (max-width: 420px) { .tagline { margin-bottom: 14px; } }
-</style>
-</head>
-<body>
-<main class="board">
-  <p class="eyebrow">Observatory Challenge</p>
-  <h1>Space Fractions</h1>
-  <p class="tagline">Read the fraction, convert it to a decimal, and submit your answer.</p>
-  <section class="panel">
-    <div class="panel-head">
-      <span class="eyebrow" style="margin: 0;">Current fraction</span>
-      <span class="chips"><span class="chip">LEVEL <span id="level">1</span></span><span class="chip">SCORE <span id="score">0</span></span><span class="chip">STREAK <span id="streak">0</span></span></span>
-    </div>
-    <div class="fraction" id="current-fraction">--</div>
-    <div class="bar"><div class="bar-fill" id="bar"></div></div>
-    <p class="hint">What decimal value does this fraction equal?</p>
-    <div class="row">
-      <input id="answer" type="text" inputmode="decimal" placeholder="e.g. 0.75 or 3/4" aria-label="Your answer" autocomplete="off">
-      <button class="primary" id="check" type="button">Check</button>
-    </div>
-    <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
-    <div class="meta">
-      <button class="ghost" id="next" type="button">Next challenge</button>
-      <span class="hint" style="margin: 0;">answers are validated by the API</span>
-    </div>
-  </section>
-</main>
-<script>
-(function () {
-  "use strict";
-  var state = { fraction: "", score: 0, streak: 0, level: 1, expectedDecimal: null };
-  var el = {
-    fraction: document.getElementById("current-fraction"),
-    bar: document.getElementById("bar"),
-    answer: document.getElementById("answer"),
-    check: document.getElementById("check"),
-    next: document.getElementById("next"),
-    feedback: document.getElementById("feedback"),
-    score: document.getElementById("score"),
-    level: document.getElementById("level"),
-    streak: document.getElementById("streak")
-  };
-  function setFeedback(message, kind) {
-    el.feedback.textContent = message || "";
-    el.feedback.className = "feedback" + (kind ? " " + kind : "");
-  }
-  function setBusy(busy) {
-    el.check.disabled = busy;
-    el.check.textContent = busy ? "Checking..." : "Check";
-  }
-  function renderFraction(fraction) {
-    state.fraction = fraction;
-    el.fraction.textContent = fraction;
-    var parts = fraction.split("/");
-    var ratio = parts.length === 2 ? Number(parts[0]) / Number(parts[1]) : 0;
-    el.bar.style.width = isFinite(ratio) && ratio > 0 ? Math.max(4, Math.min(100, ratio * 100)) + "%" : "0%";
-  }
-  function loadLevel() {
-    setFeedback("Loading new challenge...", "");
-    el.next.disabled = true;
-    fetch("/api/v1/game/fractions/level")
-      .then(function (response) {
-        if (!response.ok) { throw new Error("HTTP " + response.status); }
-        return response.json();
-      })
-      .then(function (data) {
-        var fraction = data && typeof data.fraction === "string" ? data.fraction.trim() : "";
-        if (!fraction) { throw new Error("Missing fraction in response"); }
-        renderFraction(fraction);
-        if (typeof data.level === "number" && isFinite(data.level)) {
-          state.level = data.level;
-          el.level.textContent = String(data.level);
-        }
-        state.expectedDecimal = typeof data.expectedDecimal === "number" && isFinite(data.expectedDecimal)
-          ? data.expectedDecimal
-          : null;
-        el.answer.value = "";
-        el.answer.focus();
-        el.check.disabled = false;
-        el.next.disabled = false;
-        setFeedback("", "");
-      })
-      .catch(function () {
-        el.check.disabled = false;
-        el.next.disabled = false;
-        setFeedback("Could not reach the game API. Press Next challenge to retry.", "bad");
-      });
-  }
-  function checkAnswer() {
-    var value = el.answer.value.trim();
-    if (!value) {
-      setFeedback("Type an answer first.", "bad");
-      el.answer.focus();
-      return;
-    }
-    setBusy(true);
-    setFeedback("", "");
-    fetch("/api/v1/game/fractions/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer: value, fraction: state.fraction })
-    })
-      .then(function (response) {
-        if (!response.ok) { throw new Error("HTTP " + response.status); }
-        return response.json();
-      })
-      .then(function (data) {
-        setBusy(false);
-        if (data.correct) {
-          state.score += typeof data.score === "number" ? data.score : 100;
-          state.streak += 1;
-          el.score.textContent = String(state.score);
-          el.streak.textContent = String(state.streak);
-          setFeedback("Correct. Streak: " + state.streak + ".", "ok");
-        } else {
-          state.streak = 0;
-          el.streak.textContent = "0";
-          var shown = data.expected || (state.expectedDecimal === null ? "" : String(state.expectedDecimal));
-          setFeedback(
-            shown ? "Not quite. The answer is " + shown + "." : "Not quite. Try again.",
-            "bad"
-          );
-        }
-      })
-      .catch(function () {
-        setBusy(false);
-        setFeedback("Could not reach the game API.", "bad");
-      });
-  }
-  el.check.addEventListener("click", checkAnswer);
-  el.next.addEventListener("click", loadLevel);
-  el.answer.addEventListener("keydown", function (event) {
-    if (event.key === "Enter") { checkAnswer(); }
-  });
-  loadLevel();
-})();
-</script>
-</body>
-</html>
-""",
-    "Dockerfile": (
-        "FROM node:18-alpine\n"
-        "WORKDIR /app\n"
-        "COPY package*.json ./\n"
-        "RUN npm install\n"
-        "COPY . .\n"
-        "EXPOSE 3000\n"
-        'CMD ["npm", "start"]\n'
+    "main_game.py": '''\
+"""Space Fractions - standalone desktop game.
+
+Run with:  python main_game.py
+
+A dark, space-themed game: convert the fraction shown in the observatory
+into a decimal.  Correct answers build score and streak; a wrong answer
+shows the expected decimal and resets the streak.
+"""
+
+import random
+import tkinter as tk
+
+# ---------------------------------------------------------------------------
+# Palette (dark space theme)
+# ---------------------------------------------------------------------------
+BG = "#0B1020"
+PANEL = "#101A35"
+LINE = "#26304D"
+INK = "#E9EDF6"
+MUTED = "#93A1BC"
+ACCENT = "#F2B94B"
+ACCENT_DIM = "#D9A23A"
+OK = "#5FBF8F"
+BAD = "#E07777"
+
+TOLERANCE = 0.000001
+
+CHALLENGES = (
+    ("1/2", 1, 2),
+    ("3/4", 3, 4),
+    ("2/5", 2, 5),
+    ("5/8", 5, 8),
+    ("1/4", 1, 4),
+    ("4/5", 4, 5),
+    ("3/10", 3, 10),
+    ("9/10", 9, 10),
+)
+
+
+def parse_answer(text):
+    """Parse a player answer into a float (or None when it is not valid).
+
+    Accepts decimal strings like "0.75" (including "0.750") and fraction
+    strings like "3/4" by dividing the numerator by the denominator.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        if "/" in raw:
+            parts = raw.split("/")
+            if len(parts) != 2:
+                return None
+            numerator = float(parts[0].strip())
+            denominator = float(parts[1].strip())
+            if denominator == 0:
+                return None
+            return numerator / denominator
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def choose_challenge(last_index):
+    """Return a random challenge index, never the same as the previous one."""
+    index = random.randrange(len(CHALLENGES))
+    if index == last_index:
+        index = (index + 1) % len(CHALLENGES)
+    return index
+
+
+class SpaceFractionsApp:
+    """Tkinter application for the Space Fractions game."""
+
+    def __init__(self, root):
+        self.root = root
+        self.level = 0
+        self.score = 0
+        self.streak = 0
+        self.fraction = ""
+        self.expected = 0.0
+        self._last_index = -1
+        self._build_ui()
+        self.new_challenge()
+
+    # -- layout -------------------------------------------------------------
+    def _build_ui(self):
+        self.root.title("Space Fractions")
+        self.root.configure(bg=BG)
+        self.root.geometry("520x620+60+40")
+        self.root.minsize(460, 540)
+
+        outer = tk.Frame(self.root, bg=BG)
+        outer.pack(fill="both", expand=True, padx=22, pady=18)
+
+        tk.Label(outer, text="OBSERVATORY CHALLENGE", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Label(outer, text="Space Fractions", bg=BG, fg=INK,
+                 font=("Segoe UI", 20, "bold")).pack(anchor="w", pady=(2, 0))
+        tk.Label(outer, text="Convert the fraction to a decimal.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 14))
+
+        panel = tk.Frame(outer, bg=PANEL, highlightbackground=LINE,
+                         highlightthickness=1)
+        panel.pack(fill="both", expand=True)
+
+        body = tk.Frame(panel, bg=PANEL)
+        body.pack(fill="both", expand=True, padx=18, pady=16)
+
+        chips = tk.Frame(body, bg=PANEL)
+        chips.pack(fill="x")
+        self.level_var = tk.StringVar(value="LEVEL 0")
+        self.score_var = tk.StringVar(value="SCORE 0")
+        self.streak_var = tk.StringVar(value="STREAK 0")
+        for var in (self.level_var, self.score_var, self.streak_var):
+            tk.Label(chips, textvariable=var, bg=PANEL, fg=MUTED,
+                     font=("Consolas", 10), bd=1, relief="solid",
+                     padx=9, pady=3).pack(side="left", padx=(0, 6))
+
+        self.fraction_var = tk.StringVar(value="--")
+        tk.Label(body, textvariable=self.fraction_var, bg=PANEL, fg=INK,
+                 font=("Georgia", 50, "bold")).pack(pady=(20, 4))
+
+        tk.Label(body, text="What decimal value does this fraction equal?",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 10)).pack(pady=(0, 10))
+
+        row = tk.Frame(body, bg=PANEL)
+        row.pack(fill="x")
+        self.entry = tk.Entry(row, bg="#0C1428", fg=INK, insertbackground=INK,
+                              font=("Consolas", 13), relief="flat",
+                              highlightbackground=LINE, highlightcolor=ACCENT,
+                              highlightthickness=1)
+        self.entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
+        self.entry.bind("<Return>", lambda event: self.check_answer())
+        self.check_button = tk.Button(row, text="Check Answer",
+                                      command=self.check_answer, bg=ACCENT,
+                                      fg="#1A1408", activebackground=ACCENT_DIM,
+                                      activeforeground="#1A1408", relief="flat",
+                                      font=("Segoe UI", 10, "bold"), padx=14,
+                                      pady=7, cursor="hand2")
+        self.check_button.pack(side="left")
+
+        self.feedback_var = tk.StringVar(value="")
+        self.feedback_label = tk.Label(body, textvariable=self.feedback_var,
+                                       bg=PANEL, fg=MUTED, font=("Segoe UI", 10),
+                                       anchor="w", justify="left", wraplength=380)
+        self.feedback_label.pack(fill="x", pady=(12, 0))
+
+        self.next_button = tk.Button(body, text="Next Challenge",
+                                     command=self.new_challenge, bg=PANEL,
+                                     fg=MUTED, activebackground=PANEL,
+                                     activeforeground=INK, relief="solid", bd=1,
+                                     font=("Segoe UI", 10), padx=12, pady=6,
+                                     cursor="hand2")
+        self.next_button.pack(anchor="w", pady=(14, 0))
+
+        tk.Label(body, text="Decimals (0.75) and fractions (3/4) are both accepted.",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(14, 0))
+
+    # -- game flow ----------------------------------------------------------
+    def new_challenge(self):
+        self._last_index = choose_challenge(self._last_index)
+        fraction, numerator, denominator = CHALLENGES[self._last_index]
+        self.fraction = fraction
+        self.expected = round(numerator / denominator, 3)
+        self.level += 1
+        self.fraction_var.set(fraction)
+        self.level_var.set("LEVEL " + str(self.level))
+        self._set_feedback("")
+        self.entry.delete(0, "end")
+        self.entry.focus_set()
+        self.check_button.config(state="normal")
+        self.next_button.config(state="normal")
+
+    def check_answer(self):
+        submitted = parse_answer(self.entry.get())
+        if submitted is None:
+            self._set_feedback("Type a decimal (0.75) or a fraction (3/4).", BAD)
+            self.entry.focus_set()
+            return
+        if abs(submitted - self.expected) <= TOLERANCE:
+            self.score += 100
+            self.streak += 1
+            self.score_var.set("SCORE " + str(self.score))
+            self.streak_var.set("STREAK " + str(self.streak))
+            self._set_feedback("Correct. " + self.fraction + " = " + self._fmt(self.expected) + ".", OK)
+        else:
+            self.streak = 0
+            self.streak_var.set("STREAK 0")
+            self._set_feedback("Not quite. " + self.fraction + " = " + self._fmt(self.expected) + ".", BAD)
+        self.entry.delete(0, "end")
+        self.entry.focus_set()
+
+    # -- helpers ------------------------------------------------------------
+    @staticmethod
+    def _fmt(value):
+        text = ("%.3f" % value).rstrip("0").rstrip(".")
+        return text if text else "0"
+
+    def _set_feedback(self, text, color=MUTED):
+        self.feedback_var.set(text)
+        self.feedback_label.config(fg=color)
+
+
+def main():
+    root = tk.Tk()
+    SpaceFractionsApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+''',
+    "requirements.txt": (
+        "# Space Fractions - desktop game requirements\n"
+        "#\n"
+        "# No third-party packages: the game runs on the Python\n"
+        "# standard library only (tkinter ships with the python.org installers).\n"
+        "#\n"
+        "# Just run:  python main_game.py\n"
     ),
     "schema.sql": (
         "-- Space Fractions Database Schema\n"
@@ -566,43 +430,53 @@ _STATIC_FILES: Dict[str, str] = {
     "openapi.yaml": (
         "openapi: 3.0.0\n"
         "info:\n"
-        "  title: Space Fractions Game API\n"
+        "  title: Space Fractions Game (desktop)\n"
         "  version: 1.0.0\n"
+        "  description: Documented interface of the desktop game operations.\n"
         "paths:\n"
         "  /api/v1/game/fractions/level:\n"
         "    get:\n"
-        "      summary: Returns a fresh random fraction challenge on every call\n"
+        "      summary: Picks a new random fraction challenge and its expected decimal\n"
         "      responses:\n"
         "        '200':\n"
         "          description: OK\n"
         "  /api/v1/game/fractions/validate:\n"
         "    post:\n"
-        "      summary: Validate a submitted answer\n"
+        "      summary: Validates an answer (decimals like 0.75 or fractions like 3/4)\n"
         "      responses:\n"
         "        '200':\n"
         "          description: OK\n"
     ),
-    "test.js": (
-        "describe('Space Fractions API Tests', () => {\n"
-        "    test('Pipeline verification test', () => {\n"
-        "        expect(true).toBe(true);\n"
-        "    });\n"
-        "});\n"
+    "Dockerfile": (
+        "FROM python:3.12-slim\n"
+        "WORKDIR /app\n"
+        "COPY . .\n"
+        "# The game is a Tkinter GUI: run it on a desktop session with a display.\n"
+        'CMD ["python", "main_game.py"]\n'
     ),
     "README.md": (
-        "# Space Fractions Backend + Game UI\n\n"
-        "Node.js / Express service for the Space Fractions game, with an\n"
-        "interactive browser UI served from `public/`.\n\n"
+        "# Space Fractions - Desktop Game\n\n"
+        "A standalone desktop game built with Python and Tkinter: read the\n"
+        "fraction on screen, convert it to a decimal, and build your score\n"
+        "and streak. Dark space theme, no web server required.\n\n"
         "## Run\n\n"
         "```bash\n"
-        "npm install\n"
-        "npm start\n"
+        "python main_game.py\n"
         "```\n\n"
-        "Then open <http://localhost:3000> to play.\n\n"
-        "## Endpoints\n\n"
-        "- `GET /api/v1/game/fractions/level` (fresh random challenge on every call)\n"
-        "- `POST /api/v1/game/fractions/validate` (accepts decimals like\n"
-        "  `0.75` and fractions like `3/4`, compared numerically)\n"
+        "No third-party packages are needed (tkinter ships with Python).\n\n"
+        "## How to play\n\n"
+        "- A new random fraction appears on every challenge (1/2, 3/4, ...).\n"
+        "- Type the decimal (0.75) or the fraction itself (3/4), then press\n"
+        "  Check Answer.\n"
+        "- Correct answers add 100 points and grow the streak.\n"
+        "- A wrong answer shows the expected decimal and resets the streak.\n"
+        "- Next Challenge rolls a fresh fraction and advances the level.\n\n"
+        "## Project files\n\n"
+        "- `main_game.py` - the complete game (Tkinter UI + game logic)\n"
+        "- `requirements.txt` - dependency notes (standard library only)\n"
+        "- `schema.sql` - example database schema (players, sessions)\n"
+        "- `openapi.yaml` - documented interface of the game operations\n"
+        "- `Dockerfile` - container packaging (needs a display for the GUI)\n"
     ),
 }
 
@@ -741,11 +615,10 @@ def _restrict_to_core_files(
 ) -> List[Dict[str, str]]:
     """Keep only the essential core files, flattened to their canonical paths.
 
-    Nested paths are remapped to their core file names (src/server.js ->
-    server.js, tests/test.js -> test.js, ...).  ``index.html`` (at any level)
-    is remapped to the canonical ``public/index.html`` game page.  Anything
-    outside the core set is skipped and logged, so no other sub-directories
-    are created.
+    Nested paths are remapped to their core file names (src/main.py ->
+    main_game.py, docs/readme.md -> README.md, ...).  Anything outside the
+    core set is skipped and logged, so no other sub-directories are
+    created.
     """
     kept: Dict[str, str] = {}
     order: List[str] = []
@@ -755,8 +628,6 @@ def _restrict_to_core_files(
             continue
         flat = raw.rsplit("/", 1)[-1].lower()
         canonical = _CORE_LOOKUP.get(flat)
-        if canonical is None and flat.endswith(".test.js"):
-            canonical = "test.js"
         if canonical is None:
             log(f"[agent] skipped extra file: {raw} (outside the core file set)")
             continue
@@ -845,59 +716,57 @@ def _write_static_project_files(
 
 def build_system_prompt(project_name: str = "Space Fractions") -> str:
     """Return the system prompt that drives the file generation."""
-    return f"""You are CodeAgent, a senior full-stack architect and DevOps engineer.
+    return f"""You are CodeAgent, a senior Python developer and DevOps engineer.
 You turn architecture documentation into a complete, production-ready,
-error-free full-stack project for "{project_name}": an interactive browser
-game UI plus the Node.js / Express REST backend that serves it.
+error-free standalone desktop application for "{project_name}": a dark
+space-themed Tkinter game (no web server, no browser UI).
 
 ## Deliverables
 Generate all of the following across the requested stages:
 {_REQUIRED_FILES}
 ## Validation requirements (game logic)
-- POST /api/v1/game/fractions/validate must accept the player's answer
-  robustly: trim whitespace; accept decimal strings like "0.75" (including
-  equivalents such as "0.750"); and accept fraction answers like "3/4" by
-  dividing numerator by denominator and comparing numerically with a small
-  float tolerance.
-- The game page sends {{ "answer": <text>, "fraction": <current challenge> }}
-  so the server can validate against the exact challenge in play.
-- GET /api/v1/game/fractions/level must be dynamic: every call returns a
-  brand-new randomly selected challenge from a pool of at least eight
-  fractions (e.g. 1/2, 3/4, 2/5, 5/8, 1/4, 4/5, 3/10, 9/10) with
-  expectedDecimal computed at request time, the level number incremented,
-  and no immediate repeats. Response shape:
-  {{ "status": "success", "level": 3, "fraction": "5/8", "expectedDecimal": 0.625 }}.
+- The Check Answer action must accept the player's answer robustly: trim
+  whitespace; accept decimal strings like "0.75" (including equivalents
+  such as "0.750"); and accept fraction answers like "3/4" by dividing
+  numerator by denominator and comparing numerically with a small float
+  tolerance (about 0.000001).
+- Every new challenge (on startup and on Next Challenge) must pick a
+  brand-new random fraction from a pool of at least eight (e.g. 1/2, 3/4,
+  2/5, 5/8, 1/4, 4/5, 3/10, 9/10), compute the expected decimal dynamically
+  from numerator / denominator at that moment, advance the level counter,
+  and never repeat the same fraction twice in a row.
+- Score, streak and level are tracked in the window: +100 points and a
+  growing streak for a correct answer; a wrong answer shows the expected
+  decimal and resets the streak.
 
 ## Output format (STRICT)
 - Emit every file as a block in exactly this shape:
 ===FILE: <relative/path/to/file>===
 <complete file content>
 ===END FILE===
-- Only the core files are expected (all at the project root except
-  public/index.html). Files outside this set are ignored, so do not emit
-  extra or nested files.
+- Only the core files are expected (all at the project root). Never emit
+  server.js, package.json, public/index.html, Express, Flask or any other
+  web files - this is a desktop application. Files outside the core set
+  are ignored.
 - Never wrap file contents in markdown code fences and never truncate a
   file; no "..." or "TODO" placeholders - full content only.
 
 ## Quality bar (must all hold)
 - Production-ready and error-free. No syntax errors: every opening brace
   has a matching closing brace, every string literal is correctly quoted,
-  and no unterminated template literals - when a backtick template is not
-  needed, prefer plain string concatenation. JSON, YAML and SQL must be
-  valid.
-- Fully consistent: route paths in server.js, fetch calls in the game page,
-  the OpenAPI spec and the tests must all match; the Dockerfile must run
-  the server on port 3000.
-- The game page must be complete and self-contained (inline CSS and
-  JavaScript; no external libraries or asset files): it fetches the level
-  on load and on every next-challenge click, immediately fills the
-  fraction display (#current-fraction) from the response (a placeholder
-  like -- must never get stuck), binds Submit/Check to POST the answer and
-  updates Score, Streak (reset on a wrong answer) and the status message
-  (including the expected decimal when wrong), keeps a LEVEL indicator in
-  sync with the API, clears the answer input and re-enables the buttons
-  after each fetch, and shows a graceful message with a working retry when
-  the API is unreachable.
+  and every import exists (standard library only for main_game.py - no pip
+  installs may be required to run it). JSON, YAML and SQL must be valid.
+- Fully consistent: the game logic, the README run instructions and the
+  Dockerfile must all describe the same single-file Tkinter desktop game
+  (python main_game.py); there is no web server and there are no HTTP
+  calls anywhere in the project.
+- The game window must be complete and usable: dark space-themed; score,
+  streak and level counters; a large fraction display that is filled
+  immediately from the game state (a placeholder like -- must never get
+  stuck); a bound Check Answer button; a Next Challenge action; an answer
+  field that is cleared and buttons that stay enabled after every action;
+  and a status message that reports correct/incorrect answers including
+  the expected decimal when wrong.
 """
 
 
@@ -1106,13 +975,13 @@ def _request_stage_files(
 
 
 def generate_project_code(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    """Generate the full-stack project files with the live DeepSeek API.
+    """Generate the desktop game project files with the live DeepSeek API.
 
-    The output covers the interactive game UI (public/index.html) plus the
-    Express backend, SQL schema, OpenAPI spec, tests, README and the payload
-    copy, so the reported file count is stable.  Truncated responses are
-    recovered automatically (salvage + high-quality static completion) and
-    the summary always contains a non-zero ``files_written`` list.
+    The output covers the Tkinter desktop game (main_game.py), the SQL
+    schema, OpenAPI spec, Dockerfile, README and the payload copy, so the
+    reported file count is stable.  Truncated responses are recovered
+    automatically (salvage + high-quality static completion) and the
+    summary always contains a non-zero ``files_written`` list.
     """
     log_callback, api_key, payload, output_dir = _normalize_call(args, kwargs)
 
