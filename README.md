@@ -164,7 +164,7 @@ output/
 └── architecture_payload.json  # parsed architecture input (traceability)
 ```
 
-**Note:** the SQL schema matches the documented data model; the game page, Express routes, OpenAPI paths and the tests are generated consistently with each other. The file count stays at 8-9 files (core set + payload copy). Run the generated project with `npm install` + `npm start` and open http://localhost:3000 to play; answers like `0.75` and `3/4` are both accepted.
+**Note:** the SQL schema matches the documented data model; the game page, Express routes, OpenAPI paths and the tests are generated consistently with each other. The file count stays at 8-9 files (core set + payload copy). Run the generated project with `npm install` + `npm start` and open http://localhost:3000 to play; every **Next challenge** click pulls a fresh random fraction from the level API (with its decimal computed at request time) and answers like `0.75` and `3/4` are both accepted.
 
 ---
 
